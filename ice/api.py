@@ -47,12 +47,17 @@ def fetch_calendars(data):
         doc.title = cleanName(calendar.name)
         doc.caldav_account = data["caldavaccount"]
         doc.calendar_url = str(calendar)
-        doc.parent = data["caldavaccount"]
-        doc.parentfield = "calendars"
-        doc.parenttype = "CalDav Account"
+        #doc.parent = data["caldavaccount"]
+        #doc.parentfield = "calendars"
+        #doc.parenttype = "CalDav Account"
         doc.insert()
 
         doc.link = cleanName(calendar.name)
+
+        account.append('icalendars',{
+            'icalendar': doc.name
+        })
+        account.save()
         doc.save()
     
     print("Done")

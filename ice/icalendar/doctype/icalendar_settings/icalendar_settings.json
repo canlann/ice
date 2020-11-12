@@ -1,5 +1,5 @@
 {
- "creation": "2020-11-11 19:51:45.394142",
+ "creation": "2020-11-12 21:12:04.513199",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
@@ -12,7 +12,8 @@
   {
    "fieldname": "contact_developer_section",
    "fieldtype": "Section Break",
-   "label": "Contact Developer"
+   "label": "Contact Developer",
+   "options": "Contact Developer"
   },
   {
    "fieldname": "send_log",
@@ -21,16 +22,15 @@
   },
   {
    "fieldname": "last_sync_log",
-   "fieldtype": "Small Text",
-   "label": "Last Sync Log",
-   "read_only": 1
+   "fieldtype": "Text",
+   "label": "Last Sync Log"
   }
  ],
  "issingle": 1,
- "modified": "2020-11-12 20:18:43.954111",
+ "modified": "2020-11-12 21:12:09.721046",
  "modified_by": "Administrator",
  "module": "iCalendar",
- "name": "ICalendar Settings",
+ "name": "iCalendar Settings",
  "owner": "Administrator",
  "permissions": [
   {

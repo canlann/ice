@@ -1,0 +1,110 @@
+{
+ "autoname": "field:title",
+ "creation": "2020-11-12 21:10:01.558007",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "icalendar_information_section",
+  "icalendar",
+  "created_on",
+  "last_modified",
+  "uid",
+  "events_section",
+  "duration",
+  "newest_event_on",
+  "events"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "icalendar_information_section",
+   "fieldtype": "Section Break",
+   "label": "iCalendar Information",
+   "options": "iCalendar Information"
+  },
+  {
+   "fieldname": "icalendar",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "iCalendar",
+   "options": "iCalendar",
+   "reqd": 1
+  },
+  {
+   "fieldname": "created_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Created On",
+   "reqd": 1
+  },
+  {
+   "fieldname": "last_modified",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Last Modified",
+   "reqd": 1
+  },
+  {
+   "fieldname": "uid",
+   "fieldtype": "Data",
+   "label": "UID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "events_section",
+   "fieldtype": "Section Break",
+   "label": "Events",
+   "options": "Events of Pattern"
+  },
+  {
+   "description": "If the Pattern is \"Finite\" the Event Table shows all Events. Otherwise only Events up until the shown Date are synced currently.",
+   "fieldname": "duration",
+   "fieldtype": "Select",
+   "label": "Duration",
+   "options": "Finite\nInfinite",
+   "reqd": 1
+  },
+  {
+   "fieldname": "newest_event_on",
+   "fieldtype": "Datetime",
+   "label": "Newest Event On"
+  },
+  {
+   "fieldname": "events",
+   "fieldtype": "Table",
+   "label": "Events",
+   "options": "Event Table"
+  }
+ ],
+ "modified": "2020-11-12 21:21:03.332705",
+ "modified_by": "Administrator",
+ "module": "iCalendar",
+ "name": "Custom Pattern",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

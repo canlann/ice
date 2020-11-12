@@ -8,7 +8,7 @@
   "url",
   "username",
   "password",
-  "calendars"
+  "icalendars"
  ],
  "fields": [
   {
@@ -34,13 +34,13 @@
    "reqd": 1
   },
   {
-   "fieldname": "calendars",
+   "fieldname": "icalendars",
    "fieldtype": "Table",
-   "label": "Calendars",
-   "options": "iCalendar"
+   "label": "iCalendars",
+   "options": "iCalendar Table"
   }
  ],
- "modified": "2020-11-12 17:52:57.717210",
+ "modified": "2020-11-12 21:26:04.424598",
  "modified_by": "Administrator",
  "module": "iCalendar",
  "name": "CalDav Account",
@@ -59,7 +59,6 @@
    "write": 1
   }
  ],
- "quick_entry": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
  "track_changes": 1

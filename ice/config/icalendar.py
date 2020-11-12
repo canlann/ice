@@ -15,6 +15,18 @@ def get_data():
                 },
                 {
                     "type": "doctype",
+                    "name": "Event",
+                    "label": _("Event"),
+                    "description": _("Event")
+                },
+                {
+                    "type": "doctype",
+                    "name": "Custom Pattern",
+                    "label": _("Custom Pattern"),
+                    "description": _("Custom Pattern")
+                },
+                {
+                    "type": "doctype",
                     "name": "CalDav Account",
                     "label": _("CalDav Account"),
                     "description": _("CalDav Account Settings")
@@ -26,8 +38,8 @@ def get_data():
             "items":[
                 {
                     "type": "doctype",
-                    "name": "ICalendar Settings",
-                    "label": _("Settings"),
+                    "name": "iCalendar Settings",
+                    "label": _("iCalendar Settings"),
                     "description": _("Settingspage for general Settings")
                 },
             ]

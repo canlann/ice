@@ -1,0 +1,39 @@
+{
+ "creation": "2020-11-12 21:18:11.724965",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "event",
+  "starts_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "event",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Event",
+   "options": "Event",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "event.starts_on",
+   "fieldname": "starts_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "in_preview": 1,
+   "label": "Starts On"
+  }
+ ],
+ "istable": 1,
+ "modified": "2020-11-12 21:20:42.779854",
+ "modified_by": "Administrator",
+ "module": "iCalendar",
+ "name": "Event Table",
+ "owner": "Administrator",
+ "permissions": [],
+ "quick_entry": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}
