@@ -372,7 +372,6 @@ def sync_calendar(data):
     logtext += str(rstats) + "\n"
     logtext += "-----------------------------------------------------END------------------------\n"
 
-    message["logtext"] = logtext
     message["stats"] = stats
     message["rstats"] = rstats
     message["error_stack"] = error_stack
