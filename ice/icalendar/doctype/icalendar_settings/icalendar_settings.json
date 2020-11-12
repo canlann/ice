@@ -1,0 +1,51 @@
+{
+ "creation": "2020-11-11 19:51:45.394142",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "contact_developer_section",
+  "send_log",
+  "last_sync_log"
+ ],
+ "fields": [
+  {
+   "fieldname": "contact_developer_section",
+   "fieldtype": "Section Break",
+   "label": "Contact Developer"
+  },
+  {
+   "fieldname": "send_log",
+   "fieldtype": "Button",
+   "label": "Send Log"
+  },
+  {
+   "fieldname": "last_sync_log",
+   "fieldtype": "Small Text",
+   "label": "Last Sync Log",
+   "read_only": 1
+  }
+ ],
+ "issingle": 1,
+ "modified": "2020-11-12 20:18:43.954111",
+ "modified_by": "Administrator",
+ "module": "iCalendar",
+ "name": "ICalendar Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "quick_entry": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

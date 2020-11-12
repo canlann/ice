@@ -1,0 +1,73 @@
+{
+    "autoname": "field:title",
+    "creation": "2020-11-08 17:07:19.999522",
+    "doctype": "DocType",
+    "editable_grid": 1,
+    "engine": "InnoDB",
+    "field_order": [
+     "title",
+     "link",
+     "calendar_url",
+     "caldav_account",
+     "color"
+    ],
+    "fields": [
+     {
+      "fieldname": "caldav_account",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "CalDav Account",
+      "options": "CalDav Account",
+      "reqd": 1
+     },
+     {
+      "fieldname": "calendar_url",
+      "fieldtype": "Data",
+      "label": "Calendar Url",
+      "reqd": 1
+     },
+     {
+      "fieldname": "title",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Title",
+      "reqd": 1,
+      "unique": 1
+     },
+     {
+      "fieldname": "link",
+      "fieldtype": "Link",
+      "label": "Link",
+      "options": "iCalendar"
+     },
+     {
+      "fieldname": "color",
+      "fieldtype": "Color",
+      "label": "Color"
+     }
+    ],
+    "modified": "2020-12-08 19:56:29.455377",
+    "modified_by": "Administrator",
+    "module": "iCalendar",
+    "name": "iCalendar",
+    "owner": "Administrator",
+    "permissions": [
+     {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+     }
+    ],
+    "quick_entry": 1,
+    "sort_field": "modified",
+    "sort_order": "DESC",
+    "track_changes": 1
+   }
