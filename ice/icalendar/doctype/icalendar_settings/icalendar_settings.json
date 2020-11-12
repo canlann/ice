@@ -4,9 +4,7 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
-  "contact_developer_section",
-  "send_log",
-  "last_sync_log"
+  "contact_developer_section"
  ],
  "fields": [
   {
@@ -14,20 +12,10 @@
    "fieldtype": "Section Break",
    "label": "Contact Developer",
    "options": "Contact Developer"
-  },
-  {
-   "fieldname": "send_log",
-   "fieldtype": "Button",
-   "label": "Send Log"
-  },
-  {
-   "fieldname": "last_sync_log",
-   "fieldtype": "Text",
-   "label": "Last Sync Log"
   }
  ],
  "issingle": 1,
- "modified": "2020-11-12 21:12:09.721046",
+ "modified": "2020-11-12 22:18:25.480465",
  "modified_by": "Administrator",
  "module": "iCalendar",
  "name": "iCalendar Settings",

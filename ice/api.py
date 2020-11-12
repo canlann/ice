@@ -358,15 +358,28 @@ def sync_calendar(data):
         except Exception as ex:
             stats["exception_block_meta"] += 1
             error_stack.append({ "message" : "Problem with Meta fields or doc insertion", "icalendar" : vev.serialize()})
-
-    print("--------------------------------CALDAV Calendar SYNC LOG------------------------")
-    print("Error Stack:")
+ 
+    #Return JSON and Log
+    message = {}
+    logtext = "--------------------------------CALDAV Calendar SYNC LOG------------------------\n"
+    logtext += "Error Stack:\n"
     for error in error_stack:
-        print(error["message"])
-        print(error["icalendar"])
-    print("Stats:")
-    print(stats)
-    print("RRule Stats:")
-    print(rstats)
-    print("-----------------------------------------------------END------------------------")
-    return "response"
+        logtext += error["message"] + "\n"
+        logtext += error["icalendar"] + "\n"
+    logtext += "Stats:\n"
+    logtext += str(stats) + "\n"
+    logtext += "RRule Stats:\n"
+    logtext += str(rstats) + "\n"
+    logtext += "-----------------------------------------------------END------------------------\n"
+
+    message["logtext"] = logtext
+    message["stats"] = stats
+    message["rstats"] = rstats
+    message["error_stack"] = error_stack
+
+    d = frappe.get_doc("iCalendar", data["caldavcalendar"])
+    d.last_sync_log = json.dumps(message)
+    d.save()
+    d.add_comment('Comment',text="Stats:\n" + str(stats) + "\nRRule Stats:\n" + str(rstats))
+
+    return json.dumps(message)

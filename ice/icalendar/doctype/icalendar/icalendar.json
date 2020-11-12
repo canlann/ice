@@ -8,7 +8,11 @@
   "title",
   "calendar_url",
   "caldav_account",
-  "color"
+  "color",
+  "sync_report_section",
+  "agreement",
+  "send_log",
+  "last_sync_log"
  ],
  "fields": [
   {
@@ -38,9 +42,33 @@
    "fieldname": "color",
    "fieldtype": "Color",
    "label": "Color"
+  },
+  {
+   "fieldname": "sync_report_section",
+   "fieldtype": "Section Break",
+   "label": "Sync Report",
+   "options": "Sync Report"
+  },
+  {
+   "default": "0",
+   "description": "By pressing the the button below you agree to send an error log to the app developer. The log can contain your personal information.",
+   "fieldname": "agreement",
+   "fieldtype": "Check",
+   "label": "Agreement"
+  },
+  {
+   "fieldname": "send_log",
+   "fieldtype": "Button",
+   "label": "Send Log"
+  },
+  {
+   "fieldname": "last_sync_log",
+   "fieldtype": "Text",
+   "label": "Last Sync Log",
+   "read_only": 1
   }
  ],
- "modified": "2020-11-12 21:34:28.034915",
+ "modified": "2020-11-12 22:18:14.762633",
  "modified_by": "Administrator",
  "module": "iCalendar",
  "name": "iCalendar",
