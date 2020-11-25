@@ -4,3 +4,4 @@
 *.swp
 tags
 ice/docs/current
+.vscode
