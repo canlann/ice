@@ -15,7 +15,7 @@ frappe.ui.form.on('iCalendar', {
 						args : { 'data' : {
 							"caldavaccount" : frm.doc.caldav_account,
 							"calendarurl" : frm.doc.calendar_url,
-							"caldavcalendar" : frm.doc.name,
+							"icalendar" : frm.doc.name,
 							"color" : frm.doc.color
 						   }
 						},

@@ -51,6 +51,11 @@ def fetch_calendars(data):
 
 @frappe.whitelist()
 def sync_calendar(data):
+
+    #Constants
+    sync_period = 90
+
+
     #Check if called from client side (not necessary)
     if(isinstance(data,str)):
         data = json.loads(data)
@@ -145,7 +150,6 @@ def sync_calendar(data):
 
             doc.subject = vev.summary.value
             doc.starts_on = dtstart.strftime("%Y-%m-%d %H:%M:%S")
-            doc.caldav_calendar = data["caldavcalendar"]
             if(hasattr(vev,"description")):
                 doc.description = vev.description.value
             doc.event_type = vev.__getattr__("class").value.title()
@@ -333,6 +337,7 @@ def sync_calendar(data):
                 doc.uid = vev.uid.value
             else:
                 raise Exception('Exception:', 'Event has no UID')
+            doc.icalendar = data["icalendar"]
         
             #Insert
             if(insertable and mapped):
@@ -356,7 +361,7 @@ def sync_calendar(data):
                 #Infinite Event
                 else:
                     #vev.prettyPrint()
-                    vev.rrule.value = vev.rrule.value + ";UNTIL=" + (datetime.datetime.now() + datetime.timedelta(days=14)).strftime("%Y%m%d")
+                    vev.rrule.value = vev.rrule.value + ";UNTIL=" + (datetime.datetime.now() + datetime.timedelta(days=sync_period)).strftime("%Y%m%d")
                     datetimes = list(vev.getrruleset())
                     rstats["infinite"] += 1
 
@@ -373,7 +378,7 @@ def sync_calendar(data):
                     """
                     cp = frappe.new_doc("Custom Pattern")
                     cp.title = vev.summary.value
-                    cp.icalendar = data["caldavcalendar"]
+                    cp.icalendar = data["icalendar"]
                     if(hasattr(vev,"created")):
                         cp.created_on = vev.created.value.strftime("%Y-%m-%d %H:%M:%S")
                     if(hasattr(vev,"last_modified")):
@@ -468,7 +473,7 @@ def sync_calendar(data):
     """
     """
 
-    d = frappe.get_doc("iCalendar", data["caldavcalendar"])
+    d = frappe.get_doc("iCalendar", data["icalendar"])
     d.last_sync_log = json.dumps(message)
     d.save()
     d.add_comment('Comment',text="Stats:\n" + str(stats) + "\nRRule Stats:\n" + str(rstats))
@@ -477,4 +482,70 @@ def sync_calendar(data):
     """
 
     return json.dumps(message)
+
+
+@frappe.whitelist()
+def upload_calendar(data):
+    #Check if called from client side (not necessary)
+    if(isinstance(data,str)):
+        data = json.loads(data)
+
+    #Connect to CalDav Account
+    account = frappe.get_doc("CalDav Account", data["caldavaccount"])
+    """
+    account = data["caldavaccount"]
+    """
+    client = caldav.DAVClient(url=account.url, username=account.username, password=account.password)
+    principal = client.principal()
+    calendars = principal.calendars()
+
+    #Look for the right calendar
+    for calendar in calendars:
+        if(str(calendar) == data["calendarurl"]):
+            cal = calendar
+    
+    #Go through Events
+    events = cal.events()
+
+    #Stats
+    stats = {
+        "1a" : 0,
+        "1b" : 0,
+        "1c" : 0,
+        "2a" : 0,
+        "3a" : 0,
+        "3b" : 0,
+        "4a" : 0,
+        "else" : 0,
+        "error" : 0,
+        "not_inserted" : 0,
+        "exception_block_standard" : 0,
+        "exception_block_meta" : 0
+    }
+    rstats = {
+        "norrule" : 0,
+        "daily" : 0,
+        "weekly" : 0,
+        "monthly" : 0,
+        "yearly" : 0,
+        "finite" : 0,
+        "infinite" : 0,
+        "total" : len(events),
+        "singular_event" :0,
+        "error" : 0,
+        "exception" :0
+    }
+    #Error Stack
+    error_stack = []
+
+    filters = {'icalendar': data["icalendar"]}
+    erp_events = frappe.db.sql("""
+        SELECT
+            *
+        FROM `tabEvent`
+        WHERE  = %(icalendar)s
+    """, filters=filters, as_dict=0)
+
+    return None
+
 

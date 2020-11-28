@@ -87,11 +87,13 @@
    "options": "Event Table"
   },
   {
-   "depends_on": "eval:doc.duration==\"Infinite\"",
+   "default": "90",
+   "depends_on": "doc.duration==\"Infinite\";",
    "description": "The number of days ahead that are synced with ERP. With every sync job it will delete old events that are before x-days and add events that are within the next x-days.",
    "fieldname": "sync_period",
    "fieldtype": "Int",
-   "label": "Sync Period"
+   "label": "Sync Period",
+   "read_only": 1
   },
   {
    "default": "CP-.YY.MM.-.title.-.####",
@@ -106,7 +108,7 @@
    "set_only_once": 1
   }
  ],
- "modified": "2020-11-28 11:16:42.243562",
+ "modified": "2020-11-28 20:38:41.131957",
  "modified_by": "Administrator",
  "module": "iCalendar",
  "name": "Custom Pattern",
