@@ -1,5 +1,5 @@
 {
- "autoname": "field:title",
+ "autoname": "naming_series",
  "creation": "2020-11-12 21:10:01.558007",
  "doctype": "DocType",
  "editable_grid": 1,
@@ -15,7 +15,8 @@
   "duration",
   "sync_period",
   "newest_event_on",
-  "events"
+  "events",
+  "naming_series"
  ],
  "fields": [
   {
@@ -91,9 +92,21 @@
    "fieldname": "sync_period",
    "fieldtype": "Int",
    "label": "Sync Period"
+  },
+  {
+   "default": "CP-.YY.MM.-.title.-.####",
+   "fieldname": "naming_series",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "naming_series",
+   "no_copy": 1,
+   "options": "CP-.YY.MM.-.title.-.####",
+   "print_hide": 1,
+   "reqd": 1,
+   "set_only_once": 1
   }
  ],
- "modified": "2020-11-22 21:31:18.338577",
+ "modified": "2020-11-28 11:16:42.243562",
  "modified_by": "Administrator",
  "module": "iCalendar",
  "name": "Custom Pattern",

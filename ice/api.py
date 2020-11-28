@@ -1,15 +1,16 @@
 import frappe
-import datetime
 import sys
-import json
+
 
 ## We'll try to use the local caldav library, not the system-installed
 sys.path.insert(0, '..')
 
 import caldav
-import dateutil
-import re
 from ice.caldav_utils import *
+import json
+import datetime
+import dateutil
+import traceback
 
 @frappe.whitelist()
 def fetch_calendars(data):
@@ -56,6 +57,9 @@ def sync_calendar(data):
 
     #Connect to CalDav Account
     account = frappe.get_doc("CalDav Account", data["caldavaccount"])
+    """
+    account = data["caldavaccount"]
+    """
     client = caldav.DAVClient(url=account.url, username=account.username, password=account.password)
     principal = client.principal()
     calendars = principal.calendars()
@@ -92,17 +96,18 @@ def sync_calendar(data):
         "finite" : 0,
         "infinite" : 0,
         "total" : len(events),
+        "singular_event" :0,
         "error" : 0,
         "exception" :0
     }
     #Error Stack
     error_stack = []
 
-    processing = 0
     for event in events:
         vev = event.vobject_instance.vevent
-        processing += 1
-        #print(processing + "/" + str(len(events)))
+        
+        #By default an event is not insertable in ERP
+        insertable = False
 
         try:
             #Following conversion makes it Timezone naive!
@@ -127,23 +132,21 @@ def sync_calendar(data):
                 timedelta = dtend - dtstart
                 days = (dtend.date() - dtstart.date()).days
             elif(hasattr(vev,"dtstart") and hasattr(vev,"duration")):
-                timedelta = vev.duration.value
-                days = ((dtstart + vev.duration.value).date() - dtstart.date()).days
+                timedelta = vev.duration.value #Real time difference
+                days = ((dtstart + vev.duration.value).date() - dtstart.date()).days #Full days between the dates 0,1,2...
 
             #Standard Fields
             doc = frappe.new_doc("Event")
+            """
+            doc = DotMap()
+            """
             doc.subject = vev.summary.value
             doc.starts_on = dtstart.strftime("%Y-%m-%d %H:%M:%S")
-            doc.uid = vev.uid.value
             doc.caldav_calendar = data["caldavcalendar"]
             if(hasattr(vev,"description")):
                 doc.description = vev.description.value
-            doc.event_type = "Public"
-            if(hasattr(vev, "class")):
-                #doc.event_type = "Public"
-                pass
+            doc.event_type = vev.__getattr__("class").value.title()
             
-            insertable = False
             #Case 1a: has dtend, within a day
             if((hasattr(vev,"dtend") and days == 0)):
                 doc.ends_on = dtend.strftime("%Y-%m-%d %H:%M:%S")
@@ -167,7 +170,7 @@ def sync_calendar(data):
                 insertable = True
                 stats["2a"] += 1
             #Case 3a: has dtend, not within a day
-            elif((hasattr(vev,"dtend") and timedelta.days >= 1)):
+            elif((hasattr(vev,"dtend") and days >= 1)):
                 doc.ends_on = (dtstart + timedelta).strftime("%Y-%m-%d %H:%M:%S")
                 insertable = True
                 stats["3a"] += 1
@@ -181,15 +184,16 @@ def sync_calendar(data):
                 stats["else"] += 1
             
         except Exception as ex:
-            print(traceback.format_exc())
-            vev.prettyPrint()
+            #traceback.print_exc()
+            tb = traceback.format_exc()
             insertable = False
             stats["exception_block_standard"] += 1
-            error_stack.append({ "message" : "Problem with Standard Fields/Cases", "icalendar" : vev.serialize()})
+            error_stack.append({ "message" : "Problem with Standard Fields/Cases. Exception: \n" + tb, "icalendar" : vev.serialize()})
 
+        #If the event has a recurrence rule this will be handled here, by default rrules are not mappable to ERP
+        mapped = False
         try:
             #RRULE CONVERSION
-            mapped = False
             if(hasattr(vev,"rrule")):
                 rule = dateutil.rrule.rrulestr(vev.rrule.value,dtstart=vev.dtstart.value)
                 
@@ -278,26 +282,18 @@ def sync_calendar(data):
                     else:
                         rstats["error"] += 1
                         error_stack.append({ "message" : "Mappable but Not mapped", "icalendar" : vev.serialize()})
-                #Not mappable but finite
-                elif(re.search(r'UNTIL|COUNT',vev.rrule.value)):
-                    datetimes = list(vev.getrruleset())
-                    rstats["finite"] += 1
-                #Not mappable and infinite
-                else:
-                    vev.rrule.value = vev.rrule.value + ";UNTIL=" + (datetime.datetime.now() + datetime.timedelta(days=10)).strftime("%Y%m%d")
-                    datetimes = list(vev.getrruleset())
-                    #print(str(len(list(vev.getrruleset()))))
-                    rstats["infinite"] += 1
+                
             else:
                 mapped = True
                 rstats["norrule"] += 1
         
         except Exception as ex:
-            #print(traceback.format_exc())
-            #vev.prettyPrint()
+            #traceback.print_exc()
+            tb = traceback.format_exc()
             mapped = False
             rstats["exception"] += 1
-            error_stack.append({ "message" : str(ex), "icalendar" : vev.serialize()})
+            error_stack.append({ "message" : "RRule mapping error. Exception: \n" + tb, "icalendar" : vev.serialize()})
+
 
         try:
             #Specials: Metafields
@@ -324,24 +320,131 @@ def sync_calendar(data):
                 #print("Location: " + vev.location.value)
                 pass
             
+            #ICalendar Meta Information for Sync
+            if(hasattr(vev,"last_modified")):
+                doc.last_modified = vev.last_modified.value.strftime("%Y-%m-%d %H:%M:%S")
+            if(hasattr(vev,"created")):
+                doc.created_on = vev.created.value.strftime("%Y-%m-%d %H:%M:%S")
+            if(hasattr(vev,"uid")):
+                doc.uid = vev.uid.value
+            else:
+                raise Exception('Exception:', 'Event has no UID')
+        
             #Insert
             if(insertable and mapped):
-                if(hasattr(vev,"last_modified")):
-                    doc.last_modified = vev.last_modified.value.strftime("%Y-%m-%d %H:%M:%S")
-                if(hasattr(vev,"created")):
-                    doc.created_on = vev.created.value.strftime("%Y-%m-%d %H:%M:%S")
+                """
+                """
                 doc.insert(
                         ignore_permissions=False, # ignore write permissions during insert
                         ignore_links=True, # ignore Link validation in the document
                         ignore_if_duplicate=True, # dont insert if DuplicateEntryError is thrown
                         ignore_mandatory=False # insert even if mandatory fields are not set
                 )
+            #Has rrule, not mappable to Custom Pattern
+            elif(hasattr(vev,"rrule")):
+                #Finite Event
+                is_finite = False
+                if(re.search(r'UNTIL|COUNT',vev.rrule.value)):
+                    #vev.prettyPrint()
+                    datetimes = list(vev.getrruleset())
+                    is_finite = True
+                    rstats["finite"] += 1
+                #Infinite Event
+                else:
+                    #vev.prettyPrint()
+                    vev.rrule.value = vev.rrule.value + ";UNTIL=" + (datetime.datetime.now() + datetime.timedelta(days=14)).strftime("%Y%m%d")
+                    datetimes = list(vev.getrruleset())
+                    rstats["infinite"] += 1
+
+                #Does not need a Custom Pattern
+                if(len(datetimes) == 1):
+                    """
+                    """
+                    doc.insert() #TODO Remeber this is a strange case too, cause it has a rrule but only one event
+                    rstats["singular_event"] += 1
+                #Create Custom Pattern and Linked Events
+                else:
+                    """
+                    cp = DotMap()
+                    """
+                    cp = frappe.new_doc("Custom Pattern")
+                    cp.title = vev.summary.value
+                    cp.icalendar = data["caldavcalendar"]
+                    if(hasattr(vev,"created")):
+                        cp.created_on = vev.created.value.strftime("%Y-%m-%d %H:%M:%S")
+                    if(hasattr(vev,"last_modified")):
+                        cp.last_modified = vev.last_modified.value.strftime("%Y-%m-%d %H:%M:%S")
+                    if(hasattr(vev,"uid")):
+                        cp.uid = vev.uid.value
+                    else:
+                        raise Exception("Exception:", "Event has no UID")
+                    if(is_finite):
+                        cp.duration = "Finite"
+                    else:
+                        cp.duration = "Infinite"
+
+                    cp.newest_event_on = datetimes[len(datetimes)-1].strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    """
+                    """
+                    cp.insert()
+
+                    for dt_starts_on in datetimes:
+                        """
+                        event = DotMap()
+                        """
+                        event = frappe.new_doc("Event")
+                        event.subject = vev.summary.value
+                        event.starts_on = dt_starts_on.strftime("%Y-%m-%d %H:%M:%S")
+                        #In ERP Allday Events should have an empty field for ends_on -> dtendtime = None
+                        if(doc.ends_on == "" or doc.ends_on is None):
+                            event.ends_on = ""
+                        else:
+                            dtendtime = datetime.datetime.strptime(doc.ends_on, "%Y-%m-%d %H:%M:%S").time()
+                            event.ends_on = dt_starts_on.strftime("%Y-%m-%d") + " " + dtendtime.strftime("%H:%M:%S")
+                        event.type = vev.__getattr__("class").value.title()
+                        if(hasattr(vev,"transp")):
+                            if(vev.transp.value == "TRANSPARENT"):
+                                event.color = color_variant(data["color"])
+                            elif(vev.transp.value == "OPAQUE"):
+                                event.color = data["color"]
+                            else:
+                                event.color = data["color"]
+                        else:
+                            event.color = ""
+
+                        if(hasattr(vev,"description")):
+                            description = vev.description.value
+                        else:
+                            description = None
+
+                        event.repeat_this_event = 1
+                        
+                        """
+                        """
+                        event.custom_pattern = cp.name
+                        event.insert()
+                        cp.append('events', {
+                                'event' : event.name
+                        })
+                    cp.save()
+                    """
+                    """
+
+                    #print(datetimes)
+                    #print("CP created.")
+            
+            #Has no rrule, not mappable and strange for unknown reason
             else:
                 stats["not_inserted"] += 1
         
         except Exception as ex:
+            #traceback.print_exc()
+            tb = traceback.format_exc()
             stats["exception_block_meta"] += 1
-            error_stack.append({ "message" : "Problem with Meta fields or doc insertion", "icalendar" : vev.serialize()})
+            error_stack.append({ "message" : "Problem with Meta fields or doc insertion. Exception: \n" + tb, "icalendar" : vev.serialize()})
+            
+            
  
     #Return JSON and Log
     message = {}
@@ -360,9 +463,16 @@ def sync_calendar(data):
     message["rstats"] = rstats
     message["error_stack"] = error_stack
 
+    """
+    """
+
     d = frappe.get_doc("iCalendar", data["caldavcalendar"])
     d.last_sync_log = json.dumps(message)
     d.save()
     d.add_comment('Comment',text="Stats:\n" + str(stats) + "\nRRule Stats:\n" + str(rstats))
 
+    """
+    """
+
     return json.dumps(message)
+
