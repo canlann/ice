@@ -140,6 +140,9 @@ def sync_calendar(data):
             """
             doc = DotMap()
             """
+            if(vev.summary.value == "WG"):
+                vev.prettyPrint()
+
             doc.subject = vev.summary.value
             doc.starts_on = dtstart.strftime("%Y-%m-%d %H:%M:%S")
             doc.caldav_calendar = data["caldavcalendar"]
@@ -302,8 +305,9 @@ def sync_calendar(data):
                     doc.color = color_variant(data["color"])
                 elif(vev.transp.value == "OPAQUE"):
                     doc.color = data["color"]
-                else:
-                    doc.color = data["color"]
+            else:
+                doc.color = data["color"]
+
             if(hasattr(vev,"status")):
                 #print("Status: " + vev.status.value)
                 pass
@@ -408,10 +412,8 @@ def sync_calendar(data):
                                 event.color = color_variant(data["color"])
                             elif(vev.transp.value == "OPAQUE"):
                                 event.color = data["color"]
-                            else:
-                                event.color = data["color"]
                         else:
-                            event.color = ""
+                            event.color = data["color"]
 
                         if(hasattr(vev,"description")):
                             description = vev.description.value
