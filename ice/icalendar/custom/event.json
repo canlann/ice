@@ -287,7 +287,7 @@
    "fieldname": "custom_pattern",
    "fieldtype": "Link",
    "hidden": 0,
-   "idx": 20,
+   "idx": 21,
    "ignore_user_permissions": 0,
    "ignore_xss_filter": 0,
    "in_global_search": 0,
@@ -321,6 +321,30 @@
  ],
  "custom_perms": [],
  "doctype": "Event",
- "property_setters": [],
+ "property_setters": [
+  {
+   "_assign": null,
+   "_comments": null,
+   "_liked_by": null,
+   "_user_tags": null,
+   "creation": "2020-11-28 08:42:41.200866",
+   "default_value": null,
+   "doc_type": "Event",
+   "docstatus": 0,
+   "doctype_or_field": "DocField",
+   "field_name": "event_type",
+   "idx": 0,
+   "modified": "2020-11-28 08:42:41.200866",
+   "modified_by": "Administrator",
+   "name": "Event-event_type-options",
+   "owner": "Administrator",
+   "parent": null,
+   "parentfield": null,
+   "parenttype": null,
+   "property": "options",
+   "property_type": "Text",
+   "value": "Private\nPublic\nConfidential\nCancelled"
+  }
+ ],
  "sync_on_migrate": 1
 }
