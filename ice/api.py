@@ -538,14 +538,76 @@ def upload_calendar(data):
     #Error Stack
     error_stack = []
 
-    filters = {'icalendar': data["icalendar"]}
+    filters = {
+        'icalendar': data["icalendar"]
+    }
+
     erp_events = frappe.db.sql("""
         SELECT
             *
         FROM `tabEvent`
-        WHERE  = %(icalendar)s
-    """, filters=filters, as_dict=0)
+        WHERE icalendar = %(icalendar)s AND custom_pattern is NULL;
+    """, filters=filters, as_dict=1)
+
+    erp_cps = frappe.db.sql("""
+        SELECT
+            *
+        FROM `tabCustom Pattern`
+        WHERE icalendar = %(icalendar)s);
+    """, filters, as_dict=1)
+
+    for erp_event in erp_events:
+        
+        instructions = [
+            {
+                "Cmd" : "Copy",
+                "From": "A",
+                "To"  : "B",
+            },
+            {
+                "Cmd" : "Delete",
+                "From": "A"
+            }
+            {
+                "Cmd" : "Conflict"
+            }
+        ]
+
+        #Retrieve etags
+        etaga = erp_event.etag
+        vev = event.vobject_instance.vevent
+        etagb = etag_event()
+
+        #Get instructions for event
+        instr = compile_instructions_for_event(etaga, etagb)
+
+
+        #Get corresponding objects
+
+
+        #Do the upload
+
+    
 
     return None
 
 
+
+
+
+
+############################################################ DEBUGGING ##############################
+
+if __name__ == "__main__":
+
+
+    data = {
+        "caldavaccount" : "marius.widmann@tueit.de",
+        "calendarurl" : "https://mail.tueit.de/SOGo/dav/marius.widmann%40tueit.de/Calendar/personal/",
+        "icalendar" : "Marius",
+        "color" : "#ff4d4d"
+    }
+
+    message = sync_calendar(data)
+    message = json.loads(message)
+    print(message["stats"])
