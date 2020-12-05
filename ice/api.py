@@ -5,11 +5,14 @@ import sys
 ## We'll try to use the local caldav library, not the system-installed
 sys.path.insert(0, '..')
 
+from frappe.utils.dateutils import *
 import caldav
 from ice.caldav_utils import *
 import json
 import datetime
 import dateutil
+import dateutil.rrule as RR
+import vobject
 import traceback
 
 @frappe.whitelist()
@@ -50,7 +53,7 @@ def fetch_calendars(data):
     return "response"
 
 @frappe.whitelist()
-def sync_calendar(data):
+def download_calendar(data):
 
     #Constants
     sync_period = 90
@@ -483,9 +486,106 @@ def sync_calendar(data):
 
     return json.dumps(message)
 
-
 @frappe.whitelist()
 def upload_calendar(data):
+    #Check if called from client side (not necessary)
+    if(isinstance(data,str)):
+        data = json.loads(data)
+
+    #Connect to CalDav Account
+    account = frappe.get_doc("CalDav Account", data["caldavaccount"])
+    """
+    account = data["caldavaccount"]
+    """
+    client = caldav.DAVClient(url=account.url, username=account.username, password=account.password)
+    principal = client.principal()
+    calendars = principal.calendars()
+
+    #Look for the right calendar
+    for calendar in calendars:
+        if(str(calendar) == data["calendarurl"]):
+            cal = calendar
+    
+    #Go through events
+    erp_events = frappe.db.sql("""
+        SELECT
+            *
+        FROM `tabEvent`
+        WHERE icalendar = '{icalendar}' AND custom_pattern is NULL;
+    """.format(icalendar = data["icalendar"]),as_dict=1)
+
+
+    weekdays = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
+    rrweekdays = [RR.MO,RR.TU,RR.WE,RR.TH,RR.FR,RR.SA,RR.SU]
+
+    upstats = {
+        "cancelled" : 0,
+        "unkown_event_type" : 0,
+
+    }
+
+    for ee in erp_events:
+        if(ee["status"] == "Open"):
+            new_calendar = vobject.newFromBehavior('vcalendar')
+            e  = new_calendar.add('vevent')
+            e.add('summary').value = ee["subject"]
+            dtstart = ee["starts_on"]
+            e.add('dtstart').value = dtstart
+            e.add('description').value = ee["description"]
+            if ee["event_type"] in ["Public","Privat","Confidential"]:
+                e.add('class').value = ee["event_type"]
+            else:
+                #Do not upload (break) or if syncing delete from CalDavServer
+                break;
+            
+            if(ee["all_day"] == 0):
+                e.add('dtend').value = ee["ends_on"]
+            else:
+                dtend = ee["ends_on"]
+                if(dtend == None):
+                    dtend = dtstart
+                dtend = datetime.datetime(dtend.year, dtend.month, dtend.day,0,0,0)
+                dtend = dtend + datetime.timedelta(days=1)
+                e.add('dtend').value = dtend
+
+            if(ee["last_modified"] == None):
+                frappe.db.set_value('Event', ee["name"], 'last_modified', ee["modified"].replace(microsecond=0), update_modified=False)
+                e.add('last-modified').value = ee["modified"].replace(microsecond=0)
+            else:
+                e.add('last-modified').value = ee["last_modified"]
+
+            if(ee["created_on"] == None):
+                frappe.db.set_value('Event', ee["name"], 'created_on', ee["creation"].replace(microsecond=0), update_modified=False)
+                e.add('created').value = ee["creation"].replace(microsecond=0)
+            else:
+                e.add('created').value = ee["created_on"]
+
+            #Create rrule
+            rrule = None
+            until = ee["repeat_till"]
+            byweekday = []
+            if(ee["repeat_this_event"] == 1 and ee["repeat_till"] != None):
+                until = datetime.datetime(until.year,until.month,until.day,dtstart.hour,dtstart.minute,dtstart.second)
+            if(ee["repeat_on"] == "Daily"):
+                rrule = RR.rrule(freq=RR.DAILY,until=until)
+            elif(ee["repeat_on"] == "Weekly"):
+                for idx, weekday in weekdays:
+                    if(ee[weekday] == 1):
+                        byweekday.append(rrweekdays[idx])
+                rrule = RR.rrule(freq=RR.WEEKLY,until=until,byweekday=byweekday)
+            elif(ee["repeat_on"] == "Monthly"):
+                rrule = RR.rrule(freq=RR.MONTHLY,until=until)
+            elif(ee["repeat_on"] == "Yearly"):
+                rrule = RR.rrule(freq=RR.YEARLY,until=until)
+            e.add('rrule').value = rrule
+
+            print(e)
+            ics = new_calendar.serialize()
+            cal.save_event(ics)
+    
+
+@frappe.whitelist()
+def sync_calendar(data):
     #Check if called from client side (not necessary)
     if(isinstance(data,str)):
         data = json.loads(data)
@@ -567,7 +667,7 @@ def upload_calendar(data):
             {
                 "Cmd" : "Delete",
                 "From": "A"
-            }
+            },
             {
                 "Cmd" : "Conflict"
             }
