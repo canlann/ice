@@ -537,13 +537,14 @@ def upload_calendar(data):
             else:
                 #Do not upload (break) or if syncing delete from CalDavServer
                 break;
-            
+
+            dtend = ee["ends_on"]
+            if(dtend == None):
+                    dtend = dtstart + datetime.timedelta(minutes=15)
+                    frappe.db.set_value('Event', ee["name"], 'ends_on', dtend, update_modified=False)
             if(ee["all_day"] == 0):
-                e.add('dtend').value = ee["ends_on"]
+                e.add('dtend').value = dtend
             else:
-                dtend = ee["ends_on"]
-                if(dtend == None):
-                    dtend = dtstart
                 dtend = datetime.datetime(dtend.year, dtend.month, dtend.day,0,0,0)
                 dtend = dtend + datetime.timedelta(days=1)
                 e.add('dtend').value = dtend
@@ -579,8 +580,10 @@ def upload_calendar(data):
                 rrule = RR.rrule(freq=RR.YEARLY,until=until)
             e.add('rrule').value = rrule
 
-            print(e)
             ics = new_calendar.serialize()
+            print(ics)
+            frappe.db.set_value('Event', ee["name"], 'uid', e.uid.value, update_modified=False)
+
             cal.save_event(ics)
     
 
