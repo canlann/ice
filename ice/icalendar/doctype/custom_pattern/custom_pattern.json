@@ -108,7 +108,8 @@
    "set_only_once": 1
   }
  ],
- "modified": "2020-11-28 20:38:41.131957",
+ "in_create": 1,
+ "modified": "2020-12-13 17:02:35.148852",
  "modified_by": "Administrator",
  "module": "iCalendar",
  "name": "Custom Pattern",

@@ -54,6 +54,9 @@ def fetch_calendars(data):
 
 @frappe.whitelist()
 def download_calendar(data):
+    #UI Progress Display
+    percent_progress = 0
+    frappe.show_progress('Downloading..', percent_progress, 100, 'Please wait');
 
     #Constants
     sync_period = 90
@@ -111,7 +114,7 @@ def download_calendar(data):
     #Error Stack
     error_stack = []
 
-    for event in events:
+    for idx,event in enumerate(events):
         vev = event.vobject_instance.vevent
         
         #By default an event is not insertable in ERP
@@ -453,22 +456,15 @@ def download_calendar(data):
             tb = traceback.format_exc()
             stats["exception_block_meta"] += 1
             error_stack.append({ "message" : "Problem with Meta fields or doc insertion. Exception: \n" + tb, "icalendar" : vev.serialize()})
+
+        #Update UI
+        percent_progress = idx / len(events) * 100
+        frappe.publish_progress(percent=percent_progress, title="Downloading")
             
             
  
     #Return JSON and Log
     message = {}
-    logtext = "--------------------------------CALDAV Calendar SYNC LOG------------------------\n"
-    logtext += "Error Stack:\n"
-    for error in error_stack:
-        logtext += error["message"] + "\n"
-        logtext += error["icalendar"] + "\n"
-    logtext += "Stats:\n"
-    logtext += str(stats) + "\n"
-    logtext += "RRule Stats:\n"
-    logtext += str(rstats) + "\n"
-    logtext += "-----------------------------------------------------END------------------------\n"
-
     message["stats"] = stats
     message["rstats"] = rstats
     message["error_stack"] = error_stack
@@ -519,73 +515,146 @@ def upload_calendar(data):
     rrweekdays = [RR.MO,RR.TU,RR.WE,RR.TH,RR.FR,RR.SA,RR.SU]
 
     upstats = {
-        "cancelled" : 0,
-        "unkown_event_type" : 0,
-
+        "10a" : 0,
+        "10b" : 0,
+        "10c" : 0,
+        "11b" : 0,
+        "not_uploadable" :0,
+        "exceptions" : 0,
     }
 
-    for ee in erp_events:
-        if(ee["status"] == "Open"):
-            new_calendar = vobject.newFromBehavior('vcalendar')
-            e  = new_calendar.add('vevent')
-            e.add('summary').value = ee["subject"]
-            dtstart = ee["starts_on"]
-            e.add('dtstart').value = dtstart
-            e.add('description').value = ee["description"]
-            if ee["event_type"] in ["Public","Privat","Confidential"]:
-                e.add('class').value = ee["event_type"]
+    rstats = {
+        "mapped" : 0,
+        "not_mapped" :0,
+    }
+    #Error Stack
+    error_stack = []
+
+    for idx,ee in enumerate(erp_events):
+        uploadable = True
+        try:
+            print(ee)
+            #Case 10a: Status Open, everything nominal
+            if(ee["status"] == "Open"):
+                new_calendar = vobject.newFromBehavior('vcalendar')
+                e  = new_calendar.add('vevent')
+                e.add('summary').value = ee["subject"]
+                dtstart = ee["starts_on"]
+                e.add('dtstart').value = dtstart
+                e.add('description').value = ee["description"]
+                if(ee["event_type"] in ["Public","Private","Confidential"]):
+                    e.add('class').value = ee["event_type"]
+                #Case 10b: Status Open, but Event Type is Cancelled
+                elif(ee["event_type"] == "Cancelled"):
+                    print(ee["event_type"])
+                    uploadable = False
+                    upstats["10b"] += 1
+                #Case 10c: Status Open, but Event Type not in [Public, Private, Confidential,Cancelled]
+                else:
+                    print(ee["event_type"])
+                    uploadable = False
+                    upstats["10c"] += 1
+                dtend = ee["ends_on"]
+                if(dtend == None):
+                        dtend = dtstart + datetime.timedelta(minutes=15)
+                        frappe.db.set_value('Event', ee["name"], 'ends_on', dtend, update_modified=False)
+                if(ee["all_day"] == 0):
+                    e.add('dtend').value = dtend
+                else:
+                    e.dtstart.value = dtstart.date()
+                    dtend = (dtend.date() + datetime.timedelta(days=1))
+                    e.add('dtend').value = dtend
+
+                if(ee["last_modified"] == None):
+                    frappe.db.set_value('Event', ee["name"], 'last_modified', ee["modified"].replace(microsecond=0), update_modified=False)
+                    e.add('last-modified').value = ee["modified"].replace(microsecond=0)
+                else:
+                    e.add('last-modified').value = ee["last_modified"]
+
+                if(ee["created_on"] == None):
+                    frappe.db.set_value('Event', ee["name"], 'created_on', ee["creation"].replace(microsecond=0), update_modified=False)
+                    e.add('created').value = ee["creation"].replace(microsecond=0)
+                else:
+                    e.add('created').value = ee["created_on"]
+
+                #Create rrule
+                rrule = None
+                until = ee["repeat_till"]
+                byweekday = []
+                if(ee["repeat_this_event"] == 1 and ee["repeat_till"] != None):
+                    until = datetime.datetime(until.year,until.month,until.day,dtstart.hour,dtstart.minute,dtstart.second)
+                if(ee["repeat_on"] == "Daily"):
+                    rrule = RR.rrule(freq=RR.DAILY,until=until)
+                elif(ee["repeat_on"] == "Weekly"):
+                    for idx, weekday in enumerate(weekdays):
+                        if(ee[weekday] == 1):
+                            byweekday.append(rrweekdays[idx])
+                    rrule = RR.rrule(freq=RR.WEEKLY,until=until,byweekday=byweekday)
+                elif(ee["repeat_on"] == "Monthly"):
+                    rrule = RR.rrule(freq=RR.MONTHLY,until=until)
+                elif(ee["repeat_on"] == "Yearly"):
+                    rrule = RR.rrule(freq=RR.YEARLY,until=until)
+                
+                if(rrule != None):
+                    e.add('rrule').value = rrule
+                    rstats["mapped"] += 1
+                else:
+                    rstats["not_mapped"] += 1
+
+                
+                #Remove None Children
+                none_attributes = []
+                for child in e.getChildren():
+                    if(child.value == None):
+                        none_attributes.append(child.name.lower())
+                for attr in none_attributes:
+                    e.__delattr__(attr)
+
+                ics = new_calendar.serialize()
+                print(ics)
+                frappe.db.set_value('Event', ee["name"], 'uid', e.uid.value, update_modified=False)
+
+                #Upload
+                if(uploadable):
+                    cal.save_event(ics)
+                    upstats["10a"] += 1
+                else:
+                    upstats["not_uploadable"] += 1
+            #Case 11a: Status != Open
             else:
-                #Do not upload (break) or if syncing delete from CalDavServer
-                break;
+                uploadable = False
+                upstats["11b"] += 1
+        except Exception as ex:
+            #traceback.print_exc()
+            tb = traceback.format_exc()
+            upstats["exceptions"] += 1
+            error_stack.append({ "message" : "Could not upload event. Exception: \n" + tb, "event" : json.dumps(ee)})
 
-            dtend = ee["ends_on"]
-            if(dtend == None):
-                    dtend = dtstart + datetime.timedelta(minutes=15)
-                    frappe.db.set_value('Event', ee["name"], 'ends_on', dtend, update_modified=False)
-            if(ee["all_day"] == 0):
-                e.add('dtend').value = dtend
-            else:
-                dtend = datetime.datetime(dtend.year, dtend.month, dtend.day,0,0,0)
-                dtend = dtend + datetime.timedelta(days=1)
-                e.add('dtend').value = dtend
+        #Update UI
+        percent_progress = idx / len(erp_events) * 100
+        frappe.publish_progress(percent=percent_progress, title="Uploading")
 
-            if(ee["last_modified"] == None):
-                frappe.db.set_value('Event', ee["name"], 'last_modified', ee["modified"].replace(microsecond=0), update_modified=False)
-                e.add('last-modified').value = ee["modified"].replace(microsecond=0)
-            else:
-                e.add('last-modified').value = ee["last_modified"]
 
-            if(ee["created_on"] == None):
-                frappe.db.set_value('Event', ee["name"], 'created_on', ee["creation"].replace(microsecond=0), update_modified=False)
-                e.add('created').value = ee["creation"].replace(microsecond=0)
-            else:
-                e.add('created').value = ee["created_on"]
-
-            #Create rrule
-            rrule = None
-            until = ee["repeat_till"]
-            byweekday = []
-            if(ee["repeat_this_event"] == 1 and ee["repeat_till"] != None):
-                until = datetime.datetime(until.year,until.month,until.day,dtstart.hour,dtstart.minute,dtstart.second)
-            if(ee["repeat_on"] == "Daily"):
-                rrule = RR.rrule(freq=RR.DAILY,until=until)
-            elif(ee["repeat_on"] == "Weekly"):
-                for idx, weekday in weekdays:
-                    if(ee[weekday] == 1):
-                        byweekday.append(rrweekdays[idx])
-                rrule = RR.rrule(freq=RR.WEEKLY,until=until,byweekday=byweekday)
-            elif(ee["repeat_on"] == "Monthly"):
-                rrule = RR.rrule(freq=RR.MONTHLY,until=until)
-            elif(ee["repeat_on"] == "Yearly"):
-                rrule = RR.rrule(freq=RR.YEARLY,until=until)
-            e.add('rrule').value = rrule
-
-            ics = new_calendar.serialize()
-            print(ics)
-            frappe.db.set_value('Event', ee["name"], 'uid', e.uid.value, update_modified=False)
-
-            cal.save_event(ics)
+    #Return JSON and Log
+    message = {}
+    upstats["not_uploadable"] -= upstats["10b"]
+    message["upstats"] = upstats
+    message["rstats"] = rstats
+    message["error_stack"] = error_stack
     
+
+    """
+    """
+
+    d = frappe.get_doc("iCalendar", data["icalendar"])
+    d.last_sync_log = json.dumps(message)
+    d.save()
+    d.add_comment('Comment',text="Stats:\n" + str(upstats) + "\nRRule Stats:\n" + str(rstats))
+
+    """
+    """
+
+    return json.dumps(message)
 
 @frappe.whitelist()
 def sync_calendar(data):

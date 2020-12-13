@@ -2,7 +2,8 @@
 // For license information, please see license.txt
 
 frappe.ui.form.on('Custom Pattern', {
-	// refresh: function(frm) {
+	refresh: function(frm) {
+		frm.disable_save();
+	},
 
-	// }
 });

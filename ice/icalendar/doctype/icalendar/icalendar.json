@@ -6,9 +6,11 @@
  "engine": "InnoDB",
  "field_order": [
   "title",
+  "status",
   "calendar_url",
   "caldav_account",
   "color",
+  "default_icalendar_of_user",
   "sync_report_section",
   "agreement",
   "send_log",
@@ -66,9 +68,23 @@
    "fieldtype": "Text",
    "label": "Last Sync Log",
    "read_only": 1
+  },
+  {
+   "fieldname": "default_icalendar_of_user",
+   "fieldtype": "Link",
+   "label": "Default iCalendar of User",
+   "options": "User"
+  },
+  {
+   "default": "Closed",
+   "description": "If Closed this Calendar is inactive.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Open\nClosed"
   }
  ],
- "modified": "2020-11-12 22:18:14.762633",
+ "modified": "2020-12-13 17:04:23.500738",
  "modified_by": "Administrator",
  "module": "iCalendar",
  "name": "iCalendar",
