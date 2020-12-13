@@ -520,6 +520,7 @@ def upload_calendar(data):
         "10c" : 0,
         "11b" : 0,
         "not_uploadable" :0,
+        "cancelled_or_closed_of_no_uploadable" :0,
         "exceptions" : 0,
     }
 
@@ -546,14 +547,13 @@ def upload_calendar(data):
                     e.add('class').value = ee["event_type"]
                 #Case 10b: Status Open, but Event Type is Cancelled
                 elif(ee["event_type"] == "Cancelled"):
-                    print(ee["event_type"])
                     uploadable = False
                     upstats["10b"] += 1
                 #Case 10c: Status Open, but Event Type not in [Public, Private, Confidential,Cancelled]
                 else:
-                    print(ee["event_type"])
                     uploadable = False
                     upstats["10c"] += 1
+                    raise Exception('Exception:', 'Event with Name ' + ee["name"] + ' has the invalid Event Type ' + ee["event_type"])
                 dtend = ee["ends_on"]
                 if(dtend == None):
                         dtend = dtstart + datetime.timedelta(minutes=15)
@@ -637,7 +637,7 @@ def upload_calendar(data):
 
     #Return JSON and Log
     message = {}
-    upstats["not_uploadable"] -= upstats["10b"]
+    upstats["cancelled_or_closed_of_no_uploadable"] = upstats["not_uploadable"] - upstats["10b"] - upstats["11b"]
     message["upstats"] = upstats
     message["rstats"] = rstats
     message["error_stack"] = error_stack
