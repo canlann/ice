@@ -121,6 +121,7 @@ def download_calendar(data):
         #By default an event is not insertable in ERP
         insertable = False
 
+        #Handle standard fields
         try:
             #Following conversion makes it Timezone naive!
             if(hasattr(vev,"dtstart") and type(vev.dtstart.value) is datetime.date):
@@ -308,7 +309,7 @@ def download_calendar(data):
             rstats["exception"] += 1
             error_stack.append({ "message" : "RRule mapping error. Exception: \n" + tb, "icalendar" : vev.serialize()})
 
-
+        #Handle meta fields and insert doc into erp
         try:
             #Specials: Metafields
             if(hasattr(vev,"transp")):
@@ -663,25 +664,10 @@ def sync_calendar(data):
     if(isinstance(data,str)):
         data = json.loads(data)
 
-    #Connect to CalDav Account
     account = frappe.get_doc("CalDav Account", data["caldavaccount"])
     """
     account = data["caldavaccount"]
     """
-    client = caldav.DAVClient(url=account.url, username=account.username, password=account.password)
-    principal = client.principal()
-    calendars = principal.calendars()
-
-    #Look for the right calendar
-    for calendar in calendars:
-        if(str(calendar) == data["calendarurl"]):
-            cal = calendar
-    
-    #Get CalDav Events
-    events = cal.events()
-
-    #Stats
- 
     #Get ERP Events
     icalendar = data["icalendar"]
     docs_event = frappe.db.sql(f"""
@@ -698,18 +684,8 @@ def sync_calendar(data):
         """, as_dict=1)
 
     #Go through ERP Events
-    synctool = SyncTool(data["calendarurl"])
-    uids_processed = []
-    for doc in docs_event:
-        vev = synctool.searchEventByUid(doc.uid, events)
-        synctool.syncEvent(doc, vev)
-        uids_processed.append(result[2])
-
-    for doc in docs_custom_pattern:
-        vev = synctool.searchEventByUid(doc.uid, events)
-
-    #Go through CalDav Events that are not in uids_processed
-        
+    synctool = SyncTool(account.url,data["calendarurl"],account.username,account.password, data["icalendar"])
+    synctool.syncEvents(docs_event, docs_custom_pattern)
         
     return None
 

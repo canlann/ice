@@ -15,66 +15,225 @@ import traceback
 sys.path.insert(0, '..')
 
 class SyncTool:
-    def __init__(self, caldavurl):
-        self.syncmap = SyncMap(caldavurl)
+    def __init__(self, accounturl, ressourceurl, username, password, icalendar):
+        self.syncmap = SyncMap(ressourceurl)
+        self.client = caldav.DAVClient(url=accounturl, username=username, password=password)
+        self.principal = self.client.principal()
+        self.calendars = self.principal.calendars()
+        self.synchronized_uids = []
+        self.icalendar = frappe.get_doc("iCalendar", icalendar)
 
-    def searchEventByUid(self, uid, events):
-        """
-        Returns one event in a caldav events list with the given uid.
-        If not found it will return None.
-        """
-        for idx, event in enumerate(events):
-            vev = event.vobject_instance.vevent
-            if(vev.uid.value == uid):
-                return vev
-        return None
+        #Look for the right calendar
+        for calendar in self.calendars:
+            if(str(calendar) == ressourceurl):
+                self.calendar = calendar
+        
+        #Look for the right vtodo...
 
-    def syncEvent(self, vev, doc_event):
+    def syncEvents(self, docs_event, docs_custom_pattern):
+        self.upstats = self.upstats_for_events()
+        self.modifystats = self.upstats_for_events()
+        self.downstats = self.downstats_for_events()
+
+        for doc in docs_event:
+            event = self.searchEventByUid(doc.uid)
+            self.syncEvent(event, doc)
+
+        for doc in docs_custom_pattern:
+            event = self.searchEventByUid(doc.uid)
+            self.syncCustomPattern(event, doc)
+
+        #Go through CalDav Events that are not in uids_processed
+        
+    def syncEvent(self, event, doc_event):
         """
-        docstring
+        This synchronizes two events.
+        Parameters:
+        vev_remote: The vobject event instance of the caldav server. Can be None.
+        doc_event: The dict of the ERPNext Event doctype. Can be None.
+        One of the parameters has to be != None
         """
-        instruction = self.syncmap.getInstruction()
+        vev_remote = event.vobject_instance.vevent
+        vev_merged = None
+        vev_by_doc = None
+
+        #Generate vev_by_doc if possible
+        if(doc_event):
+            vcal_with_new_event = self.createEvent(doc_event)
+            for vevent in vcal_with_new_event.getChildren():
+                #Since the vcal_with_new_event has only one vevent in it this loop always has one iteration.
+                vev_by_doc = vevent
+
+        #Get synchronization instructions
+        if(not doc_event and vev_remote):
+            etaga = None
+            etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
+            uid = vev_remote.uid.value
+        elif( doc_event and not vev_remote):
+            if(doc_event["status"] == "Open" ):
+                etaga = self.syncmap.etag(vev_by_doc.uid.value, vev_by_doc.created.value, vev_by_doc.last_modified.value)
+                etagb = None
+                uid = vev_by_doc.uid.value
+            else:
+                return
+        elif(doc_event  and vev_remote):
+            if(doc_event["status"] == "Open" ):
+                etaga = self.syncmap.etag(vev_by_doc.uid.value, vev_by_doc.created.value, vev_by_doc.last_modified.value)
+                etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
+                uid = vev_by_doc.uid.value | vev_remote.uid.value
+            else:
+                etaga = None
+                etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
+                uid = vev_by_doc.uid.value | vev_remote.uid.value
+        else:
+            raise Exception("SyncError for event: " + str(doc_event))
+
+        #Generate a merged version for upload usage
+        if(vev_remote != None and doc_event != None):
+            if(vev_remote.last_modified < doc_event["last_modified"]):
+                #If the event does exist and local (ERP Event) is newer, overwrite.
+                vev_merged = self.modifyEvent(vev_remote, doc_event)
+            else:
+                #Else: The remote event is newer, so just leave vev as is.
+                vev_merged = vev_remote
+        else:
+            #If only either a remote or a local version exist take the one that exists
+            vev_merged = vev_remote | vev_by_doc
+
+        
+        #Get instructions
+        instruction = self.syncmap.compile_instruction(uid, etaga, etagb)
+            
         #Execute instruction
         synced = False
+        vev_final_version = None
         if(instruction["Cmd"] == "Copy"):
+            is_saved = False
             for target in instruction["Target"]:
                 if(target == "A"):
                     # Copy from remote to local
-                    pass
+                    is_saved = self.parseEvent(vev_merged, doc_event["name"])
 
                 if(target == "B"):
                     # Copy from local to remote
-                    pass
-        elif(instruction["Cmd"] == "Delete"):
-            for target in instruction["Source"]:
-                if(target == "A"):
-                    # Delete from local
-                    pass
+                    if(event.vobject_instance.vevent.uid.value == vev_merged.uid.value):
+                        try:
+                            event.save()
+                            is_saved = True
+                        except:
+                            pass
+                    else:
+                        raise Exception("UIDs differ where they shouldn't.")
 
-                if(target == "B"):
+                if(target == "status" and is_saved):
+                    self.updateAfterCopyCmd(vev_merged)
+        elif(instruction["Cmd"] == "Delete"):
+            is_deleted = False
+            for source in instruction["Source"]:
+                if(source == "A"):
+                    # Delete from local
+                    try:
+                        self.deleteEventLocally(doc_event["name"])
+                        is_deleted = True
+                    except:
+                        pass
+
+                if(source == "B"):
                     # Delete from remote
-                    pass
+                    try:
+                        event.delete()
+                        is_deleted = True
+                    except:
+                        pass
+
+                if(source == "status" and is_deleted):
+                    # Delete from status
+                    self.syncmap.delete_status(vev_merged.uid.value)
         elif(instruction["Cmd"] == "Conflict"):
             # Conflict logging or resultion
             pass
         else:
             raise Exception("Synchronisation Error. Unknown instruction for syncing event with UID " + str(uid))
+    
+    def syncCustomPattern(self, event, doc_custom_pattern):
+        vev_remote = event.vobject_instance.vevent
 
-        #Update Status if execution successfull
-        syncmap.update_status(uid,etaga,etagb)
+        #Get synchronization instructions
+        if(doc_custom_pattern == None):
+            etaga = None
+            etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
+            uid = vev_remote.uid.value
+        elif(vev_remote == None):
+            etaga = self.syncmap.etag(doc_custom_pattern["uid"], doc_custom_pattern["created"], doc_custom_pattern["last_modified"])
+            etagb = None
+            uid = doc_custom_pattern["uid"]
+        elif(doc_event != None and vev_remote != None):
+            etaga = self.syncmap.etag(doc_custom_pattern["uid"], doc_custom_pattern["created"], doc_custom_pattern["last_modified"])
+            etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
+            uid = vev_remote.uid.value | doc_custom_pattern["uid"]
+        else:
+            raise Exception("No Custom Patterns passed to function.")
+        
+        #Get instructions
+        instruction = self.syncmap.compile_instruction(uid, etaga, etagb)
+            
+        #Execute instruction
+        synced = False
+        vev_final_version = None
+        if(instruction["Cmd"] == "Copy"):
+            is_saved = False
+            for target in instruction["Target"]:
+                if(target == "A"):
+                    # Copy from remote to local
+                    is_saved = self.parseEvent(vev_merged, None, doc_custom_pattern["name"])
 
-    def createEvent(self, ee, cal, upstats):
+                if(target == "B"):
+                    # Copying Custom Pattern to Remote is not a valid usecase
+                    pass
+
+                if(target == "status" and is_saved):
+                    self.updateAfterCopyCmd(vev_remote)
+        elif(instruction["Cmd"] == "Delete"):
+            is_deleted = False
+            for source in instruction["Source"]:
+                if(source == "A"):
+                    # Delete from local
+                    try:
+                        for event in doc_custom_pattern["events"]:
+                            self.deleteEventLocally(event["name"])
+                        is_deleted = True
+                    except:
+                        pass
+
+                if(source == "B"):
+                    # Delete from remote
+                    try:
+                        event.delete()
+                        is_deleted = True
+                    except:
+                        pass
+
+                if(source == "status" and is_deleted):
+                    # Delete from status
+                    self.syncmap.delete_status(vev_remote.uid.value)
+        elif(instruction["Cmd"] == "Conflict"):
+            # Conflict logging or resultion
+            pass
+        else:
+            raise Exception("Synchronisation Error. Unknown instruction for syncing event with UID " + str(uid))
+    
+    def createEvent(self, ee):
         """
-        ee is a singular erp event as dict from an frappe sql query.
+        Creates a vobject and inserts missing values into the ERPNext Event.
+        Parameter: ee is a singular erp event as dict from an frappe sql query.
+        Returns:  vobject vcalender object with a singular vevent component or None if not possible to create one.
         """
         weekdays = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
         rrweekdays = [RR.MO,RR.TU,RR.WE,RR.TH,RR.FR,RR.SA,RR.SU]
-        rstats = upstats["rstats"]
-        error_stack = upstats["error_stack"]
+        rstats = self.upstats["rstats"]
+        error_stack = self.upstats["error_stack"]
         uid = None
         
-        uploadable = True
-        uploaded = False
         try:
             #Case 10a: Status Open, everything nominal
             if(ee["status"] == "Open"):
@@ -120,7 +279,6 @@ class SyncTool:
 
                 if(ee["uid"] != None):
                     e.add('uid').value = ee["uid"]
-                    uid = e["uid"]
 
 
                 #Create rrule
@@ -160,13 +318,12 @@ class SyncTool:
                 ics = new_calendar.serialize()
                 if(ee["uid"] == None):
                     frappe.db.set_value('Event', ee["name"], 'uid', e.uid.value, update_modified=False)
-                    uid = e.uid.value
+                    ee["uid"] = e.uid.value
 
                 #Upload
                 if(uploadable):
-                    cal.save_event(ics)
                     upstats["10a"] += 1
-                    uploaded = True
+                    return new_calendar
                 else:
                     upstats["not_uploadable"] += 1
             #Case 11a: Status != Open
@@ -178,18 +335,27 @@ class SyncTool:
             upstats["exceptions"] += 1
             error_stack.append({ "message" : "Could not upload event. Exception: \n" + tb, "event" : json.dumps(ee)})
             
-        upstats["rstats"] = rstats
-        upstats["error_stack"] = error_stack
-        return (uploaded, upstats, uid)
+        self.upstats["rstats"] = rstats
+        self.upstats["error_stack"] = error_stack
+        return None
 
-    def parseEvent(self, event, downstats, data):
-        vev = event.vobject_instance.vevent
-        rstats = downstats["rstats"]
-        error_stack = downstats["error_stack"]
+    def parseEvent(self, vev, doc_name = None, custom_pattern_name = None):
+        """
+        This parses a vobject vevent and inserts it into ERPNext.
+        Parameter: 
+        vev is a vevent vobject instance
+        doc_name is the name of a document of doctype Event. If None the method creates a new Event in ERP.
+        custom_pattern_name is the name of a document of doctype Custom Pattern. If None the method creates a new Event or Custom Pattern in ERP.
+
+        Returns True if insertion was successfull.
+        """
+        rstats = self.downstats["rstats"]
+        error_stack = self.downstats["error_stack"]
 
         #By default an event is not insertable in ERP
         insertable = False
         inserted = False
+        is_a_new_document = False
 
         try:
             #Following conversion makes it Timezone naive!
@@ -218,12 +384,14 @@ class SyncTool:
                 days = ((dtstart + vev.duration.value).date() - dtstart.date()).days #Full days between the dates 0,1,2...
 
             #Standard Fields
-            doc = frappe.new_doc("Event")
+            if(doc_name == None):
+                doc = frappe.new_doc("Event")
+                is_a_new_document = True
+            else:
+                doc = frappe.get_doc("Event", doc_name)
             """
             doc = DotMap()
             """
-            if(vev.summary.value == "WG"):
-                vev.prettyPrint()
 
             doc.subject = vev.summary.value
             doc.starts_on = dtstart.strftime("%Y-%m-%d %H:%M:%S")
@@ -382,11 +550,11 @@ class SyncTool:
             #Specials: Metafields
             if(hasattr(vev,"transp")):
                 if(vev.transp.value == "TRANSPARENT"):
-                    doc.color = color_variant(data["color"])
+                    doc.color = color_variant(self.icalendar.color)
                 elif(vev.transp.value == "OPAQUE"):
-                    doc.color = data["color"]
+                    doc.color = self.icalendar.color
             else:
-                doc.color = data["color"]
+                doc.color = self.icalendar.color
 
             if(hasattr(vev,"status")):
                 #print("Status: " + vev.status.value)
@@ -413,19 +581,22 @@ class SyncTool:
                 doc.uid = vev.uid.value
             else:
                 raise Exception('Exception:', 'Event has no UID')
-            doc.icalendar = data["icalendar"]
+            doc.icalendar = self.icalendar.name
         
             #Insert
             
             if(insertable and mapped):
                 """
                 """
-                doc.insert(
-                        ignore_permissions=False, # ignore write permissions during insert
-                        ignore_links=True, # ignore Link validation in the document
-                        ignore_if_duplicate=True, # dont insert if DuplicateEntryError is thrown
-                        ignore_mandatory=False # insert even if mandatory fields are not set
-                )
+                if(is_a_new_document):
+                    doc.insert(
+                            ignore_permissions=False, # ignore write permissions during insert
+                            ignore_links=True, # ignore Link validation in the document
+                            ignore_if_duplicate=True, # dont insert if DuplicateEntryError is thrown
+                            ignore_mandatory=False # insert even if mandatory fields are not set
+                    )
+                else:
+                    doc.save()
                 inserted = True
             #Has rrule, not mappable to Custom Pattern
             elif(hasattr(vev,"rrule")):
@@ -447,7 +618,11 @@ class SyncTool:
                 if(len(datetimes) == 1):
                     """
                     """
-                    doc.insert() #TODO Remeber this is a strange case too, cause it has a rrule but only one event
+                    if(is_a_new_document): 
+                        doc.insert() #TODO Remeber this is a strange case too, cause it has a rrule but only one event
+                    else:
+                        doc.save()
+                    
                     rstats["singular_event"] += 1
                     inserted = True
                 #Create Custom Pattern and Linked Events
@@ -455,9 +630,15 @@ class SyncTool:
                     """
                     cp = DotMap()
                     """
-                    cp = frappe.new_doc("Custom Pattern")
+                    if(is_a_new_document):
+                        cp = frappe.new_doc("Custom Pattern")
+                    else:
+                        if(custom_pattern_name == None):
+                            cp = frappe.get_doc("Custom Pattern", doc.custom_pattern)
+                        else:
+                            cp = frappe.get_doc("Custom Pattern", custom_pattern_name)
                     cp.title = vev.summary.value
-                    cp.icalendar = data["icalendar"]
+                    cp.icalendar = self.icalendar.name
                     if(hasattr(vev,"created")):
                         cp.created_on = vev.created.value.strftime("%Y-%m-%d %H:%M:%S")
                     if(hasattr(vev,"last_modified")):
@@ -471,48 +652,53 @@ class SyncTool:
                     else:
                         cp.duration = "Infinite"
 
-                    cp.newest_event_on = datetimes[len(datetimes)-1].strftime("%Y-%m-%d %H:%M:%S")
                     
                     """
                     """
-                    cp.insert()
+                    if(is_a_new_document):
+                        cp.insert()
+                    else:
+                        cp.save()
 
                     for dt_starts_on in datetimes:
-                        """
-                        event = DotMap()
-                        """
-                        event = frappe.new_doc("Event")
-                        event.subject = vev.summary.value
-                        event.starts_on = dt_starts_on.strftime("%Y-%m-%d %H:%M:%S")
-                        #In ERP Allday Events should have an empty field for ends_on -> dtendtime = None
-                        if(doc.ends_on == "" or doc.ends_on is None):
-                            event.ends_on = ""
-                        else:
-                            dtendtime = datetime.datetime.strptime(doc.ends_on, "%Y-%m-%d %H:%M:%S").time()
-                            event.ends_on = dt_starts_on.strftime("%Y-%m-%d") + " " + dtendtime.strftime("%H:%M:%S")
-                        event.type = vev.__getattr__("class").value.title()
-                        if(hasattr(vev,"transp")):
-                            if(vev.transp.value == "TRANSPARENT"):
-                                event.color = color_variant(data["color"])
-                            elif(vev.transp.value == "OPAQUE"):
-                                event.color = data["color"]
-                        else:
-                            event.color = data["color"]
+                        if(cp.events):
+                            if(dt_starts_on > cp.events[len(ep.events) - 1].starts_on):
+                                """
+                                event = DotMap()
+                                """
+                                event = frappe.new_doc("Event")
+                                event.subject = vev.summary.value
+                                event.starts_on = dt_starts_on.strftime("%Y-%m-%d %H:%M:%S")
+                                #In ERP Allday Events should have an empty field for ends_on -> dtendtime = None
+                                if(doc.ends_on == "" or doc.ends_on is None):
+                                    event.ends_on = ""
+                                else:
+                                    dtendtime = datetime.datetime.strptime(doc.ends_on, "%Y-%m-%d %H:%M:%S").time()
+                                    event.ends_on = dt_starts_on.strftime("%Y-%m-%d") + " " + dtendtime.strftime("%H:%M:%S")
+                                event.type = vev.__getattr__("class").value.title()
+                                if(hasattr(vev,"transp")):
+                                    if(vev.transp.value == "TRANSPARENT"):
+                                        event.color = color_variant(self.icalendar.color)
+                                    elif(vev.transp.value == "OPAQUE"):
+                                        event.color = self.icalendar.color
+                                else:
+                                    event.color = self.icalendar.color
 
-                        if(hasattr(vev,"description")):
-                            event.description = vev.description.value
-                        else:
-                            event.description = None
+                                if(hasattr(vev,"description")):
+                                    event.description = vev.description.value
+                                else:
+                                    event.description = None
 
-                        event.repeat_this_event = 1
-                        
-                        """
-                        """
-                        event.custom_pattern = cp.name
-                        event.insert()
-                        cp.append('events', {
-                                'event' : event.name
-                        })
+                                event.repeat_this_event = 1
+                                
+                                """
+                                """
+                                event.custom_pattern = cp.name
+                                event.insert()
+                                cp.append('events', {
+                                        'event' : event.name
+                                })
+                    cp.newest_event_on = datetimes[len(datetimes)-1].strftime("%Y-%m-%d %H:%M:%S")
                     cp.save()
                     inserted = True
                     """
@@ -526,6 +712,256 @@ class SyncTool:
             downstats["exception_block_meta"] += 1
             error_stack.append({ "message" : "Problem with Meta fields or doc insertion. Exception: \n" + tb, "icalendar" : vev.serialize()})
 
-        downstats["rstats"] = rstats
-        downstats["error_stack"] = error_stack
-        return (inserted, downstats)
+        frappe.db.commit()
+        self.downstats["rstats"] = rstats
+        self.downstats["error_stack"] = error_stack
+        return inserted
+
+    def modifyEvent(self, vev, ee):
+        """
+        Overwrites the components of a vevent (vev), except the UID, with the values of the ERP Event (dict(ee)).
+        Returns the new vevent or None if unsuccessfull or errors occurred. 
+        """
+        weekdays = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
+        rrweekdays = [RR.MO,RR.TU,RR.WE,RR.TH,RR.FR,RR.SA,RR.SU]
+        rstats = self.modifystats["rstats"]
+        error_stack = self.modifystats["error_stack"]
+        uid = None
+        vev_original_ics = vev.serialize()
+
+        uploadable = True
+        try:
+            #Case 10a: Status Open, everything nominal
+            if(ee["status"] == "Open"):
+                vev = self.addOrChange(vev, "summary", ee["subject"])
+                dtstart = ee["starts_on"]
+                vev = self.addOrChange(vev, "dtstart", dtstart)
+                vev = self.addOrChange(vev, "description", ee["description"])
+                if(ee["event_type"] in ["Public","Private","Confidential"]):
+                    vev = self.addOrChange(vev, "class", ee["event_type"])
+                #Case 10b: Status Open, but Event Type is Cancelled
+                elif(ee["event_type"] == "Cancelled"):
+                    uploadable = False
+                    upstats["10b"] += 1
+                #Case 10c: Status Open, but Event Type not in [Public, Private, Confidential,Cancelled]
+                else:
+                    uploadable = False
+                    upstats["10c"] += 1
+                    raise Exception('Exception:', 'Event with Name ' + ee["name"] + ' has the invalid Event Type ' + ee["event_type"])
+                dtend = ee["ends_on"]
+                if(dtend == None):
+                        dtend = dtstart + datetime.timedelta(minutes=15)
+                        frappe.db.set_value('Event', ee["name"], 'ends_on', dtend, update_modified=False)
+                if(ee["all_day"] == 0):
+                    vev = self.addOrChange(vev, "dtend", dtend)
+                else:
+                    e.dtstart.value = dtstart.date()
+                    dtend = (dtend.date() + datetime.timedelta(days=1))
+                    vev = self.addOrChange(vev, "dtend", dtend)
+
+                if(ee["last_modified"] == None):
+                    frappe.db.set_value('Event', ee["name"], 'last_modified', ee["modified"].replace(microsecond=0), update_modified=False)
+                    vev = self.addOrChange(vev, "last-modified", ee["modified"].replace(microsecond=0))
+                else:
+                    vev = self.addOrChange(vev, "last-modified", ee["last_modified"])
+
+                if(ee["created_on"] == None):
+                    frappe.db.set_value('Event', ee["name"], 'created_on', ee["creation"].replace(microsecond=0), update_modified=False)
+                    vev = self.addOrChange(vev, "created", ee["creation"].replace(microsecond=0))
+                else:
+                    vev = self.addOrChange(vev, "created", ee["created_on"])
+
+                #if(ee["uid"] != None):
+                #    vev = self.addOrChange(vev, "uid", ee["uid"])
+
+
+                #Create rrule
+                rrule = None
+                until = ee["repeat_till"]
+                byweekday = []
+                if(ee["repeat_this_event"] == 1 and ee["repeat_till"] != None):
+                    until = datetime.datetime(until.year,until.month,until.day,dtstart.hour,dtstart.minute,dtstart.second)
+                if(ee["repeat_on"] == "Daily"):
+                    rrule = RR.rrule(freq=RR.DAILY,until=until)
+                elif(ee["repeat_on"] == "Weekly"):
+                    for idx, weekday in enumerate(weekdays):
+                        if(ee[weekday] == 1):
+                            byweekday.append(rrweekdays[idx])
+                    rrule = RR.rrule(freq=RR.WEEKLY,until=until,byweekday=byweekday)
+                elif(ee["repeat_on"] == "Monthly"):
+                    rrule = RR.rrule(freq=RR.MONTHLY,until=until)
+                elif(ee["repeat_on"] == "Yearly"):
+                    rrule = RR.rrule(freq=RR.YEARLY,until=until)
+                
+                if(rrule != None):
+                    vev = self.addOrChange(vev, "rrule", rrule)
+                    rstats["mapped"] += 1
+                else:
+                    rstats["not_mapped"] += 1
+
+
+                
+                #Remove None Children
+                none_attributes = []
+                for child in vev.getChildren():
+                    if(child.value == None):
+                        none_attributes.append(child.name.lower())
+                for attr in none_attributes:
+                    vev.__delattr__(attr)
+
+                if(ee["uid"] == None):
+                    frappe.db.set_value('Event', ee["name"], 'uid', e.uid.value, update_modified=False)
+                    #vev = self.addOrChange(vev, "uid", ee["uid"])
+
+                #Upload
+                if(uploadable):
+                    upstats["10a"] += 1
+                    return vev
+                else:
+                    upstats["not_uploadable"] += 1
+            #Case 11a: Status != Open
+            else:
+                upstats["11b"] += 1
+        except Exception:
+            #traceback.print_exc()
+            tb = traceback.format_exc()
+            upstats["exceptions"] += 1
+            error_stack.append({ "message" : "Could not merge event. Exception: \n" + tb, "event" : json.dumps(ee), "vev_ics" : vev_original_ics})
+            
+        self.modifystats["rstats"] = rstats
+        self.modifystats["error_stack"] = error_stack
+        return None
+        
+    def deleteEventLocally(doc_name):
+        frappe.db.set_value('Event', doc_name, 'status', 'Closed')
+
+    def updateAfterCopyCmd(vev):
+        etag =  self.syncmap.etag(vev.uid.value, vev.created.value, vev.last_modified.value)
+        self.syncmap.update(vev.uid.value,etag) 
+
+    def addOrChange(self, vev, name, value):
+        """
+        If the vevent has the component with "name" then it will be exchanged with the given value. If not it will be added.
+        Careful it does not check for duplicate components lilke EXDATE...
+        """
+        if(hasattr(vev, name)):
+            vev.__delattr__(name)
+        vev.add(name).value = value
+        return vev
+
+    def downstats_for_events(self):
+        """
+        This initialises a dict for keeping statistics about the successfully downloaded events.
+        """
+        events = self.calendar.events()
+        downstats = {
+            "1a" : 0,
+            "1b" : 0,
+            "1c" : 0,
+            "2a" : 0,
+            "3a" : 0,
+            "3b" : 0,
+            "4a" : 0,
+            "else" : 0,
+            "error" : 0,
+            "not_inserted" : 0,
+            "exception_block_standard" : 0,
+            "exception_block_meta" : 0,
+            "rstats" : {
+                "norrule" : 0,
+                "daily" : 0,
+                "weekly" : 0,
+                "monthly" : 0,
+                "yearly" : 0,
+                "finite" : 0,
+                "infinite" : 0,
+                "total" : len(events),
+                "singular_event" :0,
+                "error" : 0,
+                "exception" :0
+            },
+            "error_stack" : []
+        }
+
+        return downstats
+
+    def upstats_for_events(self):
+        """
+        This initialises a dict for keeping statistics about the successfully uploaded events.
+        """
+       upstats = {
+            "10a" : 0,
+            "10b" : 0,
+            "10c" : 0,
+            "11b" : 0,
+            "not_uploadable" :0,
+            "cancelled_or_closed_of_no_uploadable" :0,
+            "exceptions" : 0,
+            "rstats" : {
+                "mapped" : 0,
+                "not_mapped" :0,
+            },
+            "error_stack" : []
+        }
+        return upstats
+
+    def searchEventByUid(self, uid):
+        """
+        Returns one event in a caldav events list with the given uid.
+        If not found it will return None.
+        """
+        for idx, event in enumerate(self.events):
+            vev = event.vobject_instance.vevent
+            if(vev.uid.value == uid):
+                return event
+        return None
+
+    def isEqualEventsEasy(self, vev1, vev2):
+        return vev1 == vev2
+
+    def isEqualEvents(self, vev1, vev2):
+        """
+        Untestet method.
+        This returns a True/False value depening on wether the two events are exactly the same or not.
+        """
+        c1 = list(vev1.getSortedChildren())
+        c2 = list(vev2.getSortedChildren())
+        if(len(c1) == len(c2)):
+            boollist = self.compareComponents(c1,c2)
+            isEqual = self.reduceList(boollist)
+            return isEqual
+        else:
+            return False
+
+    def compareComponents(c1, c2):
+        """
+        Untestet method.
+        This returns a list with True/False values. If the lists are of differing length the return list will be of the length of the shorter list.
+        Hence this can not be used to compare two vevents unless the length is checked beforehand.
+        Source: https://www.geeksforgeeks.org/python-map-function/
+        """
+        result = map(lambda x, y: x == y, c1, c2) 
+        return list(result)
+
+    def reduceList(result):
+        """
+        Untestet method.
+        This will reduce the comparison of the components lists in compareComponents to a singular value.
+        It will find out if the both lists are equal or not.
+        Source: https://www.geeksforgeeks.org/reduce-in-python/
+        and
+        Source: https://www.journaldev.com/37089/how-to-compare-two-lists-in-python
+        """
+        # importing functools for reduce() 
+        import functools 
+        are_equal = functools.reduce(lambda a,b : a and b, result)
+        return are_equal
+
+    def mergeEvent(self, vev_a, vev_b):
+        """
+        Not implemented. Thought: Is it possible to merge two ics-strings with prioritizing one over the other and then parsing it back into a vevent?
+        For merging two events. This is not perfect, but should do it for now as long as there are no duplicate entries in the ics-string (e.g. EXDATE,...)
+        """
+        if(vev_a.last_modified.value < vev_b.last_modified.value):
+            #Merge b into a
+            pass   

@@ -33,9 +33,20 @@ class SyncMap:
         """
         self.update_status(uid)
     
+    def update(self, uid, etag):
+        """
+        This is a convenient wrapper for update_status().
+        Call this function after a successfull sync of two items and supply the etag, which should be the same for both
+        items after the sync.
+        """
+        self.update_status(uid,etag)
+
     def update_status(self, uid, etaga = None, etagb = None):
         """
         After a successfull sync of the item this function needs to be called. If both tags are None the status entry will be deleted.
+        Normally this function is getting called after the successfull sync of two events/items. In this case the etaga and etagb would
+        be the same. Hence you can call this function this way:
+        update_status(uid, etag)
         """
         try:
             if(uid and (etaga or etagb)):
@@ -83,8 +94,8 @@ class SyncMap:
         """
         @Parameters
         uid = Universal Identifier of the item
-        a = etag of the local item if exists
-        b = etag of the remote item if exists
+        a = etag of the local item if loacl item exists else pass None
+        b = etag of the remote item if remote item exists else pass None
 
         @Returns 
         The instructions on what needs to be done with two corresponding events ( = an event with the same uid).
