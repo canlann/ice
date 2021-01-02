@@ -117,26 +117,34 @@ class SyncMap:
             instruction = {
                 "Cmd" : "Copy",
                 "Source" : "A",
-                "Target" : ["B", "status"]
+                "Target" : ["B", "status"],
+                "Tasks" : 2,
+                "Done" : 0
             }
             return instruction
         elif(not a and b and not statustags):
             instruction = {
                 "Cmd" : "Copy",
                 "Source" : "B",
-                "Target" : ["A", "status"]
+                "Target" : ["A", "status"],
+                "Tasks" : 2,
+                "Done" : 0
             }
             return instruction
         elif(a and not b and statustags):
             instruction = {
                 "Cmd" : "Delete",
-                "Source" : ["A","status"]
+                "Source" : ["A","status"],
+                "Tasks" : 2,
+                "Done" : 0
             }
             return instruction
         elif(not a and b and statustags):
             instruction = {
                 "Cmd" : "Delete",
-                "Source" : ["B","status"]
+                "Source" : ["B","status"],
+                "Tasks" : 2,
+                "Done" : 0
             }
             return instruction
         elif(a and b and not statustags):
@@ -147,7 +155,9 @@ class SyncMap:
         elif(not a and not b and statustags):
             instruction = {
                 "Cmd" : "Delete",
-                "Source" : ["status"]
+                "Source" : ["status"],
+                "Tasks" : 1,
+                "Done" : 0
             }
             return instruction
         elif(a and b and statustags):
@@ -155,19 +165,25 @@ class SyncMap:
                 instruction = {
                     "Cmd" : "Copy",
                     "Source" : "A",
-                    "Target" : ["B","status"]
+                    "Target" : ["B","status"],
+                    "Tasks" : 2,
+                    "Done" : 0
                 }
                 return instruction
             elif(statustags[0] == a and statustags[1] != b):
                 instruction = {
                     "Cmd" : "Copy",
                     "Source" : "B",
-                    "Target" : ["A","status"]
+                    "Target" : ["A","status"],
+                    "Tasks" : 2,
+                    "Done" : 0
                 }
                 return instruction
             elif(statustags[0] != a and statustags[1] != b):
                 instruction = {
-                    "Cmd" : "Conflict"
+                    "Cmd" : "Conflict",
+                    "Tasks" : 1,
+                    "Done" : 0
                 }
                 return instruction
             else:

@@ -5,5 +5,8 @@ frappe.ui.form.on('Custom Pattern', {
 	refresh: function(frm) {
 		frm.disable_save();
 	},
+	onload: function(frm) {
+		frm.disable_save();
+	}
 
 });

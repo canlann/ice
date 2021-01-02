@@ -5,6 +5,7 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "status",
   "title",
   "icalendar_information_section",
   "icalendar",
@@ -19,6 +20,14 @@
   "naming_series"
  ],
  "fields": [
+  {
+    "fieldname": "status",
+    "fieldtype": "Select",
+    "in_list_view": 1,
+    "label": "Status",
+    "reqd": 1,
+    "options": "Open\nClosed"
+  },
   {
    "fieldname": "title",
    "fieldtype": "Data",
@@ -109,7 +118,7 @@
   }
  ],
  "in_create": 1,
- "modified": "2020-12-13 17:02:35.148852",
+ "modified": "2020-12-31 17:02:35.148852",
  "modified_by": "Administrator",
  "module": "iCalendar",
  "name": "Custom Pattern",
