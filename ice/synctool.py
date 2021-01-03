@@ -38,13 +38,13 @@ class SyncTool:
 
         for doc in docs_event:
             event = self.searchEventByUid(doc.uid)
-            synced = self.syncEvent(event, doc)
-            self.synchronized_uids.append(doc.uid)
+            (synced, uid) = self.syncEvent(event, doc)
+            self.synchronized_uids.append(uid)
 
         for doc in docs_custom_pattern:
             event = self.searchEventByUid(doc.uid)
-            synced = self.syncCustomPattern(event, doc)
-            self.synchronized_uids.append(doc.uid)
+            (synced, uid) = self.syncCustomPattern(event, doc)
+            self.synchronized_uids.append(uid)
 
         synced_caldav_events = 0
         for event in self.calendar.events():
@@ -56,7 +56,10 @@ class SyncTool:
 
         #Everything done?
         total_to_sync_items = len(docs_event) + len(docs_custom_pattern) + synced_caldav_events
-        if(total_to_sync_items == )
+        if(total_to_sync_items == len(self.synchronized_uids)):
+            return "All Done"
+        else:
+            raise Exception("Did process to few or two many events.")
 
     def syncEvent(self, event, doc_event):
         """
@@ -199,9 +202,9 @@ class SyncTool:
 
         #All done?
         if(instruction["Tasks"] == instruction["Done"]):
-            return vev_
+            return (True, uid)
         else:
-            return False
+            return (False, uid)
     
     def syncCustomPattern(self, event, doc_custom_pattern):
         #Get vev_remote
@@ -301,9 +304,9 @@ class SyncTool:
 
         #All done?
         if(instruction["Tasks"] == instruction["Done"]):
-            return True
+            return (True, uid)
         else:
-            return False
+            return (False, uid)
     
     def createEvent(self, ee):
         """
