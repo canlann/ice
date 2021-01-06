@@ -170,7 +170,7 @@ class SyncTool:
                             instruction["Done"] += 1
                             pass
                         elif(event.vobject_instance.vevent.uid.value == vev_updated.uid.value):
-                            self.saveItemRemote(vcalendarics = vcal_with_new_event.save_event.serialize())
+                            self.saveItemRemote(vcalendarics = vcal_with_new_event.serialize())
                             instruction["Target"].pop("B")
                             instruction["Done"] += 1
                         else:
