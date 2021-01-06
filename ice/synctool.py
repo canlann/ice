@@ -1,5 +1,6 @@
 from ice.syncmap import SyncMap
-from frappe.frappe import frappe
+#from frappe.frappe import frappe
+import frappe
 import sys
 from frappe.utils.dateutils import *
 import caldav
@@ -47,43 +48,68 @@ class SyncTool:
 
         return
 
+    def imputeVev(self, vev):
+        """
+        By impute is meant to add missing values, that are necessary for processing.
+        Paramter: vevent
+        Returns: vevent
+        """
+        vev.prettyPrint()
+        if(not hasattr(vev, "created")):
+            vev.add("created").value = vev.dtstamp.value
+        if(not hasattr(vev,"last_modified")):
+            vev.add("last-modified").value = vev.created.value 
+        return vev
+
     def syncEvents(self, docs_event, docs_custom_pattern):
         self.upstats = self.upstats_for_events()
         self.modifystats = self.upstats_for_events()
         self.downstats = self.downstats_for_events()
         self.synchronized_uids = []
-
+        idx = 1
         for doc in docs_event:
             event = self.searchEventByUid(doc.uid)
             (synced, uid) = self.syncEvent(event, doc)
             self.synchronized_uids.append(uid)
+            print("Sync Event " + str(idx) + "/" + str(len(docs_event)))
+            idx += 1
 
+        idx = 1
         for doc in docs_custom_pattern:
             event = self.searchEventByUid(doc.uid)
             (synced, uid) = self.syncCustomPattern(event, doc)
             self.synchronized_uids.append(uid)
+            print("Sync Custom Pattern" + str(idx) + "/" + str(len(docs_custom_pattern)))
+            idx += 1
 
         synced_caldav_events = 0
-        for event in self.calendar.events():
+        events = self.calendar.events()
+        idx = 1
+        for event in events:
             uid = event.vobject_instance.vevent.uid.value
             if uid not in self.synchronized_uids:
                 synced = self.syncEvent(event)
                 self.synchronized_uids.append(uid)
                 synced_caldav_events += 1
+                print("Sync CaldavEvent " + str(idx) + "/" + str(len(events)))
+                idx += 1
+            
+            if(idx > 1):
+                break
 
         #Everything done?
         total_to_sync_items = len(docs_event) + len(docs_custom_pattern) + synced_caldav_events
         if(total_to_sync_items == len(self.synchronized_uids)):
-            stats = [
-                self.downstats,
-                self.upstats,
-                self.modifystats
-            ]
+            stats = {
+                "downstats" : self.downstats,
+                "upstats" : self.upstats,
+                "modifystats" : self.modifystats
+            }
             return stats
         else:
             raise Exception("Did process to few or two many events.")
 
-    def syncEvent(self, event, doc_event):
+    def syncEvent(self, event = None, doc_event = None):
         """
         This synchronizes two events.
         Parameters:
@@ -98,7 +124,8 @@ class SyncTool:
 
         #Get vev_remote
         if(event):
-            vev_remote = event.vobject_instance.vevent
+            vev_remote = self.imputeVev(event.vobject_instance.vevent)
+
 
         #Generate vev_by_doc if possible
         if(not vev_remote and doc_event):
@@ -113,7 +140,7 @@ class SyncTool:
                 vev_updated = vev_remote
 
         if(vev_remote and doc_event):
-            if(vev_remote.last_modified < doc_event["last_modified"]):
+            if(vev_remote.last_modified.value < doc_event["last_modified"]):
                 #If the event does exist and local (ERP Event) is newer, overwrite.
                 vev_updated = self.modifyEvent(vev_remote, doc_event)
             else:
@@ -121,40 +148,43 @@ class SyncTool:
                 vev_updated = vev_remote
 
         #Get synchronization instructions
-        self.is_deleted_local(event | doc_event)
+        is_deleted_local = self.is_deleted_locally(vev_remote, doc_event)
         if(not doc_event and vev_remote):
             etaga = None
             etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
             uid = vev_remote.uid.value
         elif( doc_event and not vev_remote):
-            if(not self.is_deleted_local):
+            if(not is_deleted_local):
                 etaga = self.syncmap.etag(vev_by_doc.uid.value, vev_by_doc.created.value, vev_by_doc.last_modified.value)
                 etagb = None
                 uid = vev_by_doc.uid.value
             else:
                 return
         elif(doc_event  and vev_remote):
-            if(not self.is_deleted_local):
+            if(not is_deleted_local):
                 etaga = self.syncmap.etag(vev_by_doc.uid.value, vev_by_doc.created.value, vev_by_doc.last_modified.value)
                 etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
-                uid = vev_by_doc.uid.value | vev_remote.uid.value
+                uid = vev_by_doc.uid.value or vev_remote.uid.value
             else:
                 etaga = None
                 etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
-                uid = vev_by_doc.uid.value | vev_remote.uid.value
+                uid = vev_by_doc.uid.value or vev_remote.uid.value
         else:
             raise Exception("SyncError for event: " + str(doc_event))
 
         #Get instructions
         instruction = self.syncmap.compile_instruction(uid, etaga, etagb)
-            
         #Execute instruction
         if(instruction["Cmd"] == "Copy"):
             for target in instruction["Target"]:
                 if(target == "A"):
                     try:
                         # Copy from remote to local
-                        is_copied = self.parseEvent(vev_updated, doc_event["name"])
+                        is_copied = False
+                        if(doc_event):
+                            is_copied = self.parseEvent(vev_updated, doc_event["name"])
+                        else:
+                            is_copied = self.parseEvent(vev_updated)
                         if(is_copied):
                             instruction["Target"].pop("A")
                             instruction["Done"] += 1
@@ -230,34 +260,34 @@ class SyncTool:
         else:
             return (False, uid)
     
-    def syncCustomPattern(self, event, doc_custom_pattern):
+    def syncCustomPattern(self, event = None, doc_custom_pattern = None):
         vev_remote = None
         #Get vev_remote
         if(event):
-            vev_remote = event.vobject_instance.vevent
+            vev_remote = self.imputeVev(event.vobject_instance.vevent)
 
         #Get synchronization instructions
-        self.is_deleted_local(event | doc_custom_pattern)
+        is_deleted_local = self.is_deleted_locally(vev_remote, doc_custom_pattern)
         if(not doc_custom_pattern and vev_remote):
             etaga = None
             etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
             uid = vev_remote.uid.value
         elif(doc_custom_pattern and not vev_remote):
-            if(not self.is_deleted_local):
+            if(not is_deleted_local):
                 etaga = self.syncmap.etag(doc_custom_pattern["uid"], doc_custom_pattern["created"], doc_custom_pattern["last_modified"])
                 etagb = None
                 uid = doc_custom_pattern["uid"]
             else:
                 return
         elif(doc_custom_pattern  and vev_remote):
-            if(not self.is_deleted_local):
+            if(not is_deleted_local):
                 etaga = self.syncmap.etag(doc_custom_pattern["uid"], doc_custom_pattern["created"], doc_custom_pattern["last_modified"])
                 etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
-                uid = doc_custom_pattern["uid"] | vev_remote.uid.value
+                uid = doc_custom_pattern["uid"] or vev_remote.uid.value
             else:
                 etaga = None
                 etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
-                uid = doc_custom_pattern["uid"]| vev_remote.uid.value
+                uid = doc_custom_pattern["uid"]or vev_remote.uid.value
         else:
             raise Exception("SyncError for Custom Pattern: " + str(doc_custom_pattern))
         
@@ -270,7 +300,11 @@ class SyncTool:
                 if(target == "A"):
                     try:
                         # Copy from remote to local
-                        is_copied = self.parseEvent(vev_remote, custom_pattern_name=doc_custom_pattern["name"])
+                        is_copied = False
+                        if(doc_custom_pattern):
+                            is_copied = self.parseEvent(vev_remote, doc_custom_pattern["name"])
+                        else:
+                            is_copied = self.parseEvent(vev_remote)
                         if(is_copied):
                             instruction["Target"].pop("A")
                             instruction["Done"] += 1
@@ -705,7 +739,6 @@ class SyncTool:
             doc.icalendar = self.icalendar.name
         
             #Insert
-            
             if(insertable and mapped):
                 """
                 """
@@ -833,7 +866,6 @@ class SyncTool:
             downstats["exception_block_meta"] += 1
             error_stack.append({ "message" : "Problem with Meta fields or doc insertion. Exception: \n" + tb, "icalendar" : vev.serialize()})
 
-        frappe.db.commit()
         self.downstats["rstats"] = rstats
         self.downstats["error_stack"] = error_stack
         return inserted
@@ -954,21 +986,30 @@ class SyncTool:
         self.modifystats["error_stack"] = error_stack
         return None
         
-    def is_deleted_local(self, vev_or_doc):
+    def is_deleted_locally(self, vev = None, doc = None):
         """
         This method checks if a Event or Custom Pattern has been deleted locally and can be called e.g.:
-        is_deleted_local(vev | doc)
+        is_deleted_local(vev or doc)
         is_deleted_local(vev)
         is_deleted_local(doc)
         The parameter vev_or_doc needs to be of either a vobject vevent or a doctype Custom Pattern/Event as dict().
         """
         #Check if doc is deleted locally
-        self.is_deleted_local = True
-        if(hasattr(vev_or_doc, "dtstart")): #checking for dtstart is random. right way would be to check for type()
-            self.is_deleted_local = self.is_vev_deleted_local(vev_or_doc)
-        else:
-            self.is_deleted_local = self.is_doc_deleted_local(vev_or_doc)
-        return self.is_deleted_local
+        is_deleted_local = None
+        vev_is_deleted = False
+        doc_is_deleted = False
+        if(vev): #checking for dtstart is random. right way would be to check for type()
+            vev_is_deleted = self.is_vev_deleted_local(vev)
+            is_deleted_local = vev_is_deleted
+        if(doc):
+            doc_is_deleted = self.is_doc_deleted_local(doc)
+            is_deleted_local = doc_is_deleted
+
+        if((vev and doc) and (vev_is_deleted != doc_is_deleted)):
+            raise Exception("The ERP Event or Custom Pattern with the UID " + str(vev.uid.value) + " is not or is deleted locally?")
+
+
+        return is_deleted_local
 
     def is_doc_deleted_local(self, doc):
         """
@@ -984,28 +1025,32 @@ class SyncTool:
         return False
 
     def is_vev_deleted_local(self, vev):
-        names = []
+        uid = vev.uid.value
+        icalendar_name = self.icalendar.name
         if(hasattr(vev, "uid")):
             docs_event = frappe.db.sql(f"""
                 SELECT
                     *
                 FROM `tabEvent`
-                WHERE icalendar = "{self.icalendar.name}" AND custom_pattern is NULL AND uid = "{vev.uid.value}";
+                WHERE icalendar = "{icalendar_name}" AND custom_pattern is NULL AND uid = "{uid}";
                 """, as_dict=1)
             docs_custom_pattern = frappe.db.sql(f"""
                 SELECT
                     *
                 FROM `tabCustom Pattern`
-                WHERE icalendar = "{self.icalendar.name}"  AND uid = "{vev.uid.value}";
+                WHERE icalendar = "{icalendar_name}"  AND uid = "{uid}";
                 """, as_dict=1)
             if(len(docs_event) == 1 ^ len(docs_custom_pattern) == 1 ):
+                return False
+            elif(len(docs_event) == 0 and len(docs_event) == 0):
                 return True
             else:
+                names = []
                 for event in docs_event:
                     names.append(event["name"])
                 for cp in docs_custom_pattern:
                     names.append(cp["name"])
-                raise Exception("Duplicate", "The vevent " + str(vev)  + " exists is not unique (Event/Custom Pattern). Names: " + str(names))
+                raise Exception("Duplicates", "Name of duplicates ERP Event or Custom Pattern are: " + str(names) + " ICS-String: " + str(vev) )
         else:
             raise Exception("UID does not exist.", "The vevent " + str(vev) + " has no UID. Can not confirm if it exists in ERP.")
     
@@ -1090,7 +1135,7 @@ class SyncTool:
         Returns one event in a caldav events list with the given uid.
         If not found it will return None.
         """
-        for idx, event in enumerate(self.events):
+        for idx, event in enumerate(self.calendar.events()):
             vev = event.vobject_instance.vevent
             if(vev.uid.value == uid):
                 return event
