@@ -75,6 +75,8 @@ def download_calendar(data):
     client = caldav.DAVClient(url=account.url, username=account.username, password=account.password)
     principal = client.principal()
     calendars = principal.calendars()
+    cal = None
+    doc = None 
 
     #Look for the right calendar
     for calendar in calendars:
@@ -163,6 +165,8 @@ def download_calendar(data):
             doc.event_type = vev.__getattr__("class").value.title()
             
             #Case 1a: has dtend, within a day
+            days = None
+            timedelta  = None
             if((hasattr(vev,"dtend") and days == 0)):
                 doc.ends_on = dtend.strftime("%Y-%m-%d %H:%M:%S")
                 insertable = True
@@ -498,6 +502,7 @@ def upload_calendar(data):
     client = caldav.DAVClient(url=account.url, username=account.username, password=account.password)
     principal = client.principal()
     calendars = principal.calendars()
+    cal = None
 
     #Look for the right calendar
     for calendar in calendars:
@@ -685,9 +690,20 @@ def sync_calendar(data):
 
     #Go through ERP Events
     synctool = SyncTool(account.url,data["calendarurl"],account.username,account.password, data["icalendar"])
-    synctool.syncEvents(docs_event, docs_custom_pattern)
+    stats  = synctool.syncEvents(docs_event, docs_custom_pattern)
         
-    return None
+    #Return JSON and Log
+    message = {}
+    d = frappe.get_doc("iCalendar", data["icalendar"])
+    d.last_sync_log = json.dumps(message)
+    d.save()
+    d.add_comment('Comment',text="Stats:\n" + str(stats))
+
+    from ice.jcache import JCache
+    cache = JCache('last_sync')
+    cache.stash("stats",stats)
+
+    return json.dumps(message)
 
 
 

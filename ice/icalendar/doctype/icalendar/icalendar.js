@@ -1,8 +1,9 @@
 frappe.ui.form.on('iCalendar', {
 	refresh: function (frm) {
 		if (!frm.is_new()) {
-			frm.add_custom_button('Download', function () { frm.trigger('download_calendar') }, __("Sync"));
-			frm.add_custom_button('Upload', function () { frm.trigger('upload_calendar') }, __("Sync"));
+			//frm.add_custom_button('Download', function () { frm.trigger('download_calendar') }, __("Sync"));
+			//frm.add_custom_button('Upload', function () { frm.trigger('upload_calendar') }, __("Sync"));
+			frm.add_custom_button('Sync', function () { frm.trigger('sync_calendar') }, __("Sync"));
 		}
 	},
 	default_icalendar_of_user: function(frm){
@@ -71,5 +72,26 @@ frappe.ui.form.on('iCalendar', {
 			}
 		});
 		frappe.msgprint(__('iCalendar Upload started...'));
+	},
+	sync_calendar: function(frm){
+		frappe.call({
+			method: "ice.api.sync_calendar",
+			args : { 'data' : {
+				"caldavaccount" : frm.doc.caldav_account,
+				"calendarurl" : frm.doc.calendar_url,
+				"icalendar" : frm.doc.name
+				}
+			},
+			callback: function(response_json){
+				var r = JSON.parse(response_json.message)
+				console.log(r)
+				//show_alert with indicator
+				frappe.show_alert({
+					message:__('iCalendar Sync complete.'),
+					indicator:'green'
+				}, 7);
+			}
+		});
+		frappe.msgprint(__('iCalendar Sync started...'));
 	}
 });

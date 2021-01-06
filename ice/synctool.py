@@ -1,5 +1,5 @@
 from ice.syncmap import SyncMap
-import frappe
+from frappe.frappe import frappe
 import sys
 from frappe.utils.dateutils import *
 import caldav
@@ -30,6 +30,23 @@ class SyncTool:
         
         #Look for the right vtodo...
 
+    def saveItemRemote(self, vcalendarics = None, caldavevent = None):
+        if(vcalendarics):
+            #self.calendar.save_event(vcalendarics)
+            pass
+        if(caldavevent):
+            #caldavevent.save()
+            pass
+        
+        return
+
+    def deleteItemRemote(self, caldavevent = None):
+        if(caldavevent):
+            #caldavevent.save()
+            pass
+
+        return
+
     def syncEvents(self, docs_event, docs_custom_pattern):
         self.upstats = self.upstats_for_events()
         self.modifystats = self.upstats_for_events()
@@ -57,7 +74,12 @@ class SyncTool:
         #Everything done?
         total_to_sync_items = len(docs_event) + len(docs_custom_pattern) + synced_caldav_events
         if(total_to_sync_items == len(self.synchronized_uids)):
-            return "All Done"
+            stats = [
+                self.downstats,
+                self.upstats,
+                self.modifystats
+            ]
+            return stats
         else:
             raise Exception("Did process to few or two many events.")
 
@@ -72,6 +94,7 @@ class SyncTool:
         vev_remote = None
         vev_by_doc = None
         vev_updated = None
+        vcal_with_new_event = None
 
         #Get vev_remote
         if(event):
@@ -142,11 +165,12 @@ class SyncTool:
                     # Copy from local to remote
                     try:
                         if(vev_updated):
-                            event.save()
+                            self.saveItemRemote(caldavevent = event)
                             instruction["Target"].pop("B")
                             instruction["Done"] += 1
+                            pass
                         elif(event.vobject_instance.vevent.uid.value == vev_updated.uid.value):
-                            self.calendar.save_event(vcal_with_new_event.save_event.serialize())
+                            self.saveItemRemote(vcalendarics = vcal_with_new_event.save_event.serialize())
                             instruction["Target"].pop("B")
                             instruction["Done"] += 1
                         else:
@@ -175,7 +199,7 @@ class SyncTool:
                 if(source == "B"):
                     # Delete from remote
                     try:
-                        event.delete()
+                        self.deleteItemRemote(caldavevent = event)
                         instruction["Source"].pop("B")
                         instruction["Done"] += 1
                     except:
@@ -207,24 +231,25 @@ class SyncTool:
             return (False, uid)
     
     def syncCustomPattern(self, event, doc_custom_pattern):
+        vev_remote = None
         #Get vev_remote
         if(event):
             vev_remote = event.vobject_instance.vevent
 
         #Get synchronization instructions
-        self.is_deleted_local(event | doc_event)
-        if(not doc_event and vev_remote):
+        self.is_deleted_local(event | doc_custom_pattern)
+        if(not doc_custom_pattern and vev_remote):
             etaga = None
             etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
             uid = vev_remote.uid.value
-        elif(doc_event and not vev_remote):
+        elif(doc_custom_pattern and not vev_remote):
             if(not self.is_deleted_local):
                 etaga = self.syncmap.etag(doc_custom_pattern["uid"], doc_custom_pattern["created"], doc_custom_pattern["last_modified"])
                 etagb = None
                 uid = doc_custom_pattern["uid"]
             else:
                 return
-        elif(doc_event  and vev_remote):
+        elif(doc_custom_pattern  and vev_remote):
             if(not self.is_deleted_local):
                 etaga = self.syncmap.etag(doc_custom_pattern["uid"], doc_custom_pattern["created"], doc_custom_pattern["last_modified"])
                 etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
@@ -277,7 +302,7 @@ class SyncTool:
                 if(source == "B"):
                     # Delete from remote
                     try:
-                        event.delete()
+                        self.deleteItemRemote(caldavevent = event)
                         instruction["Source"].pop("B")
                         instruction["Done"] += 1
                     except:
@@ -316,9 +341,11 @@ class SyncTool:
         """
         weekdays = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
         rrweekdays = [RR.MO,RR.TU,RR.WE,RR.TH,RR.FR,RR.SA,RR.SU]
+        upstats = self.upstats
         rstats = self.upstats["rstats"]
         error_stack = self.upstats["error_stack"]
         uid = None
+        uploadable = False
         
         try:
             #Case 10a: Status Open, everything nominal
@@ -436,8 +463,12 @@ class SyncTool:
 
         Returns True if insertion was successfull.
         """
+        downstats = self.downstats
         rstats = self.downstats["rstats"]
         error_stack = self.downstats["error_stack"]
+        days = None
+        timedelta = None
+        doc = None
 
         #By default an event is not insertable in ERP
         insertable = False
@@ -752,7 +783,7 @@ class SyncTool:
 
                     for dt_starts_on in datetimes:
                         if(cp.events):
-                            if(dt_starts_on > cp.events[len(ep.events) - 1].starts_on):
+                            if(dt_starts_on > cp.events[len(cp.events) - 1].starts_on):
                                 """
                                 event = DotMap()
                                 """
@@ -814,6 +845,7 @@ class SyncTool:
         """
         weekdays = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
         rrweekdays = [RR.MO,RR.TU,RR.WE,RR.TH,RR.FR,RR.SA,RR.SU]
+        modifystats = self.modifystats
         rstats = self.modifystats["rstats"]
         error_stack = self.modifystats["error_stack"]
         uid = None
@@ -832,11 +864,11 @@ class SyncTool:
                 #Case 10b: Status Open, but Event Type is Cancelled
                 elif(ee["event_type"] == "Cancelled"):
                     uploadable = False
-                    upstats["10b"] += 1
+                    modifystats["10b"] += 1
                 #Case 10c: Status Open, but Event Type not in [Public, Private, Confidential,Cancelled]
                 else:
                     uploadable = False
-                    upstats["10c"] += 1
+                    modifystats["10c"] += 1
                     raise Exception('Exception:', 'Event with Name ' + ee["name"] + ' has the invalid Event Type ' + ee["event_type"])
                 dtend = ee["ends_on"]
                 if(dtend == None):
@@ -845,7 +877,7 @@ class SyncTool:
                 if(ee["all_day"] == 0):
                     vev = self.addOrChange(vev, "dtend", dtend)
                 else:
-                    e.dtstart.value = dtstart.date()
+                    vev = self.addOrChange(vev, "dtstart", dtstart.date())
                     dtend = (dtend.date() + datetime.timedelta(days=1))
                     vev = self.addOrChange(vev, "dtend", dtend)
 
@@ -900,22 +932,22 @@ class SyncTool:
                     vev.__delattr__(attr)
 
                 if(ee["uid"] == None):
-                    frappe.db.set_value('Event', ee["name"], 'uid', e.uid.value, update_modified=False)
+                    frappe.db.set_value('Event', ee["name"], 'uid', vev.uid.value, update_modified=False)
                     #vev = self.addOrChange(vev, "uid", ee["uid"])
 
                 #Upload
                 if(uploadable):
-                    upstats["10a"] += 1
+                    modifystats["10a"] += 1
                     return vev
                 else:
-                    upstats["not_uploadable"] += 1
+                    modifystats["not_uploadable"] += 1
             #Case 11a: Status != Open
             else:
-                upstats["11b"] += 1
+                modifystats["11b"] += 1
         except Exception:
             #traceback.print_exc()
             tb = traceback.format_exc()
-            upstats["exceptions"] += 1
+            modifystats["exceptions"] += 1
             error_stack.append({ "message" : "Could not merge event. Exception: \n" + tb, "event" : json.dumps(ee), "vev_ics" : vev_original_ics})
             
         self.modifystats["rstats"] = rstats
@@ -933,9 +965,9 @@ class SyncTool:
         #Check if doc is deleted locally
         self.is_deleted_local = True
         if(hasattr(vev_or_doc, "dtstart")): #checking for dtstart is random. right way would be to check for type()
-            self.is_deleted_local = self.is_vev_deleted_local(vev_remote)
+            self.is_deleted_local = self.is_vev_deleted_local(vev_or_doc)
         else:
-            self.is_deleted_local = self.is_doc_deleted_local(doc_event)
+            self.is_deleted_local = self.is_doc_deleted_local(vev_or_doc)
         return self.is_deleted_local
 
     def is_doc_deleted_local(self, doc):
@@ -983,7 +1015,7 @@ class SyncTool:
     def deleteCustomPatternLocally(doc_name):
         frappe.db.set_value('Custom Pattern', doc_name, 'status', 'Closed')
 
-    def updateAfterCopyCmd(vev):
+    def updateAfterCopyCmd(self, vev):
         etag =  self.syncmap.etag(vev.uid.value, vev.created.value, vev.last_modified.value)
         self.syncmap.update(vev.uid.value,etag) 
 
@@ -1037,7 +1069,7 @@ class SyncTool:
         """
         This initialises a dict for keeping statistics about the successfully uploaded events.
         """
-       upstats = {
+        upstats = {
             "10a" : 0,
             "10b" : 0,
             "10c" : 0,
