@@ -11,6 +11,10 @@ import dateutil
 import dateutil.rrule as RR
 import vobject
 import traceback
+import pytz
+import pickle
+from ice.jsonencoder import ComplexEncoder
+from ice.jcache import JCache
 
 ## We'll try to use the local caldav library, not the system-installed
 sys.path.insert(0, '..')
@@ -23,15 +27,71 @@ class SyncTool:
         self.calendars = self.principal.calendars()
         self.synchronized_uids = []
         self.icalendar = frappe.get_doc("iCalendar", icalendar)
+        self.log = []
 
         #Look for the right calendar
         for calendar in self.calendars:
             if(str(calendar) == ressourceurl):
                 self.calendar = calendar
-        
+
+        # Load Events/Custom Patterns
+        self.docs_event = frappe.db.sql(f"""
+            SELECT
+                *
+            FROM `tabEvent`
+            WHERE icalendar = "{icalendar}" AND custom_pattern is NULL;
+            """, as_dict=1)
+        self.docs_custom_pattern = frappe.db.sql(f"""
+            SELECT
+                *
+            FROM `tabCustom Pattern`
+            WHERE icalendar = "{icalendar}";
+            """, as_dict=1)
+
+        #Create backups
+        timestamp = datetime.datetime.now().strftime("%F %T")
+        self.backupRemote(timestamp)
+        self.backupLocal(timestamp)
+
         #Look for the right vtodo...
 
+    def __del__(self):
+        del self.syncmap
+        self.dump()
+
+    def cleanseFilename(self,filename):
+        filename = re.sub(r'[^a-zA-Z0-9\-]','', filename)
+        return filename
+
+    def backupLocal(self, timestamp):
+        """
+        Dump Events and Custom Pattern from SQL to pickle
+        """
+        # Backup Events
+        filename = timestamp + str(self.calendar) + "_events.pickle"
+        filename = self.cleanseFilename(filename)
+        pickle.dump(self.docs_event, open( filename , "wb"))
+
+        # Backup Custom Pattern
+        filename = timestamp + str(self.calendar) + "_custom_pattern.pickle"
+        filename = self.cleanseFilename(filename)
+        pickle.dump(self.docs_custom_pattern, open( filename , "wb"))
+
+    def backupRemote(self, timestamp):
+        """
+        Dump Remote with Pickle.
+        """
+        # Backup Caldav Calendar Object
+        filename = timestamp + str(self.calendar) + "_caldavobject.pickle"
+        filename = self.cleanseFilename(filename)
+        pickle.dump( self.calendar, open( filename , "wb" ) )
+        # Reverse is pickle.load( open( "save.pickle", "rb" ) )
+        pass
+
     def saveItemRemote(self, vcalendarics = None, caldavevent = None):
+        """
+        Whenever saving an Item on the remote side, use this function. If for testing purposes saving should be interuppted, just uncomment the lines of code in this method.
+        """
         if(vcalendarics):
             #self.calendar.save_event(vcalendarics)
             pass
@@ -42,6 +102,9 @@ class SyncTool:
         return
 
     def deleteItemRemote(self, caldavevent = None):
+        """
+        Whenever deleting an Item on the remote side, use this function. If for testing purposes saving should be interuppted, just uncomment the lines of code in this method.
+        """
         if(caldavevent):
             #caldavevent.save()
             pass
@@ -54,32 +117,122 @@ class SyncTool:
         Paramter: vevent
         Returns: vevent
         """
-        vev.prettyPrint()
+        # Impute missing values
         if(not hasattr(vev, "created")):
             vev.add("created").value = vev.dtstamp.value
         if(not hasattr(vev,"last_modified")):
-            vev.add("last-modified").value = vev.created.value 
+            vev.add("last-modified").value = vev.created.value
+
+        # to UTC
+        vev = self.toUTC(vev, changeTz=False,removeVobjOriginalTz=True,removeTzInfo=True)
+
         return vev
 
-    def syncEvents(self, docs_event, docs_custom_pattern):
+    def toUTC(self, vev, changeTz = True, removeVobjOriginalTz = True, removeTzInfo = False):
+        """
+        If run with default parameters this will change the vevent object. It will remove original timezone information and recalculate datetimes to timezone UTC.
+        If run with parameters changeTZ=False, removeVobjOriginalTz=True, removeTzInfo=True this will change the vevent object. It will remove original timezone information, but it will not recalculate the datetime objects.
+        If the Users are all in the same timezone, this option will be sufficient.
+        If the Users are in different timezones it will be necessary to add timezone information whenever accessing or storing datetime object in ERP. There must be datetime settings in ERP somewhere (This is not implemented yet).
+        Sources: https://vinta.ws/code/timezone-in-python-offset-naive-and-offset-aware-datetimes.html
+        """
+        # Forked from change_tz.py : change_tz(cal, PyICU.ICUtzinfo.default, PyICU.ICUtzinfo.default, utc_only = False)
+        nodenames = ["dtstart", "dtend"] #Datetime components to convert
+        utc_only = False
+        utc_tz = pytz.timezone('UTC')
+        new_timezone = pytz.timezone('UTC')#ICUtzinfo.getInstance('UTC')
+        for name in nodenames:
+            node = None
+            if(hasattr(vev,name)):
+                node = getattr(vev,name,None)
+            else:
+                break
+            if node:
+                dt = node.value
+                default = node.value.tzname()
+                if (isinstance(dt, datetime.datetime) and
+                        (not utc_only or dt.tzinfo == utc_tz)):
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=default)
+                    if(changeTz):
+                        node.value = dt.astimezone(new_timezone)
+                    if(hasattr(node, "params") and removeVobjOriginalTz):
+                        if("X-VOBJ-ORIGINAL-TZID" in node.params):
+                            node.params.pop("X-VOBJ-ORIGINAL-TZID")
+                    if(removeTzInfo):
+                        node.value.replace(tzinfo=None)
+        return vev
+
+    def unawareComparison(self, dt1, operator, dt2):
+        """
+        This is a helper method when using the synctool within users being all in the same timezone. In general datetimeobjects should ALWAYS be handled timezone aware.
+        See method toUTC for more information. If one day this synctool should be changed to handle timezone aware systems, do a backwards search and replace this method wherever it is being called with a simple boolean comaprison.
+        """
+        if(not dt1.tzname()):
+            dt1localized = pytz.utc.localize(dt1)
+        else:
+            dt1localized = dt1
+
+        if(not dt2.tzname()):
+            dt2localized = pytz.utc.localize(dt2)
+        else:
+            dt2localized = dt2
+
+        if(operator == "lt"):
+            return dt1localized < dt2localized
+        elif(operator == "gt"):
+            return dtlocallized > dt2localized
+
+    def getStats(self):
+        stats = {
+                    "downstats" : self.downstats,
+                    "upstats" : self.upstats,
+                    "modifystats" : self.modifystats,
+                    "log" : self.log
+        }
+        return stats
+
+
+    def dump(self):
+        try:
+            stats = self.getStats()
+            cache = JCache('caldav_last_sync')
+            cache.stash("stats",stats)
+        except:
+            raise("Could not dump synchronization and error information.")
+        
+    @staticmethod
+    def retrieveDump():
+        cache = JCache('caldav_last_sync')
+        stats = cache.fetch("stats")
+        return stats
+
+    def syncEvents(self):
+        """
+        Syncs all the Events and Custom Patterns by default.
+        Default function call: syncEvents()
+        Parameters: None
+        """
         self.upstats = self.upstats_for_events()
         self.modifystats = self.upstats_for_events()
         self.downstats = self.downstats_for_events()
         self.synchronized_uids = []
         idx = 1
-        for doc in docs_event:
+
+
+        for doc in self.docs_event:
             event = self.searchEventByUid(doc.uid)
             (synced, uid) = self.syncEvent(event, doc)
             self.synchronized_uids.append(uid)
-            print("Sync Event " + str(idx) + "/" + str(len(docs_event)))
+            print("Sync Event " + str(idx) + "/" + str(len(self.docs_event)))
             idx += 1
 
         idx = 1
-        for doc in docs_custom_pattern:
+        for doc in self.docs_custom_pattern:
             event = self.searchEventByUid(doc.uid)
             (synced, uid) = self.syncCustomPattern(event, doc)
             self.synchronized_uids.append(uid)
-            print("Sync Custom Pattern" + str(idx) + "/" + str(len(docs_custom_pattern)))
+            print("Sync Custom Pattern" + str(idx) + "/" + str(len(self.docs_custom_pattern)))
             idx += 1
 
         synced_caldav_events = 0
@@ -98,14 +251,9 @@ class SyncTool:
                 break
 
         #Everything done?
-        total_to_sync_items = len(docs_event) + len(docs_custom_pattern) + synced_caldav_events
+        total_to_sync_items = len(self.docs_event) + len(self.docs_custom_pattern) + synced_caldav_events
         if(total_to_sync_items == len(self.synchronized_uids)):
-            stats = {
-                "downstats" : self.downstats,
-                "upstats" : self.upstats,
-                "modifystats" : self.modifystats
-            }
-            return stats
+            return
         else:
             raise Exception("Did process to few or two many events.")
 
@@ -128,19 +276,22 @@ class SyncTool:
 
 
         #Generate vev_by_doc if possible
-        if(not vev_remote and doc_event):
+        if(doc_event): #Performance optimization: if(doc_event and not event) => this threw an error in line 317 NoneType for vev_by_doc, status was not correct
             vcal_with_new_event = self.createEvent(doc_event)
             for vevent in vcal_with_new_event.getChildren():
                 #Since the vcal_with_new_event has only one vevent in it this loop always has one iteration.
                 vev_by_doc = vevent
+                print("Log: vev_by_doc after creation")
+                vev_by_doc.prettyPrint()
 
-        #Generate a vev version for upload usage
+        #Generate a vev_updated version for upload usage
         #If only either a remote or a local version exist take the one that exists
         if(vev_remote and not doc_event):
                 vev_updated = vev_remote
 
         if(vev_remote and doc_event):
-            if(vev_remote.last_modified.value < doc_event["last_modified"]):
+            local_is_newer = self.unawareComparison(vev_remote.last_modified.value, "lt", doc_event["last_modified"])
+            if(local_is_newer):
                 #If the event does exist and local (ERP Event) is newer, overwrite.
                 vev_updated = self.modifyEvent(vev_remote, doc_event)
             else:
@@ -160,8 +311,10 @@ class SyncTool:
                 uid = vev_by_doc.uid.value
             else:
                 return
-        elif(doc_event  and vev_remote):
+        elif( doc_event  and vev_remote):
             if(not is_deleted_local):
+                print("Log: vev_by_doc before accessing uid")
+                vev_by_doc.prettyPrint()
                 etaga = self.syncmap.etag(vev_by_doc.uid.value, vev_by_doc.created.value, vev_by_doc.last_modified.value)
                 etagb = self.syncmap.etag(vev_remote.uid.value, vev_remote.created.value, vev_remote.last_modified.value)
                 uid = vev_by_doc.uid.value or vev_remote.uid.value
@@ -174,6 +327,7 @@ class SyncTool:
 
         #Get instructions
         instruction = self.syncmap.compile_instruction(uid, etaga, etagb)
+        print(instruction)
         #Execute instruction
         if(instruction["Cmd"] == "Copy"):
             for target in instruction["Target"]:
@@ -253,7 +407,7 @@ class SyncTool:
         else:
             raise Exception("Synchronisation Error. Unknown instruction for syncing event with UID " + str(uid))
 
-
+        print(instruction)
         #All done?
         if(instruction["Tasks"] == instruction["Done"]):
             return (True, uid)
@@ -367,6 +521,9 @@ class SyncTool:
         else:
             return (False, uid)
     
+    def logProblem(self, problem, objecttype, identifier):
+        self.log.append([problem, objecttype, identifier])
+
     def createEvent(self, ee):
         """
         Creates an offline vobject and inserts missing values into the ERPNext Event. This does not save the event to local or remote.
@@ -379,14 +536,15 @@ class SyncTool:
         rstats = self.upstats["rstats"]
         error_stack = self.upstats["error_stack"]
         uid = None
-        uploadable = False
+        uploadable = True
         
         try:
             #Case 10a: Status Open, everything nominal
             if(ee["status"] == "Open"):
                 new_calendar = vobject.newFromBehavior('vcalendar')
                 e  = new_calendar.add('vevent')
-                e.prodid.value = '-//iCalendar Extension (ice) module//Marius Widmann//'
+                new_calendar.add("prodid")
+                new_calendar.prodid.value = '-//iCalendar Extension (ice) module//Marius Widmann//'
                 e.add('summary').value = ee["subject"]
                 dtstart = ee["starts_on"]
                 e.add('dtstart').value = dtstart
@@ -396,10 +554,12 @@ class SyncTool:
                 #Case 10b: Status Open, but Event Type is Cancelled
                 elif(ee["event_type"] == "Cancelled"):
                     uploadable = False
+                    self.logProblem("Event Type Cancelled in Method createEvent()", ee["doctype"], ee["name"])
                     upstats["10b"] += 1
                 #Case 10c: Status Open, but Event Type not in [Public, Private, Confidential,Cancelled]
                 else:
                     uploadable = False
+                    self.logProblem("Event Type not in Public, Private, Confidential or Cancelled in Method createEvent()", ee["doctype"], ee["name"])
                     upstats["10c"] += 1
                     raise Exception('Exception:', 'Event with Name ' + ee["name"] + ' has the invalid Event Type ' + ee["event_type"])
                 dtend = ee["ends_on"]
@@ -481,7 +641,7 @@ class SyncTool:
             #traceback.print_exc()
             tb = traceback.format_exc()
             upstats["exceptions"] += 1
-            error_stack.append({ "message" : "Could not upload event. Exception: \n" + tb, "event" : json.dumps(ee)})
+            error_stack.append({ "message" : "Could not upload event. Exception: \n" + tb, "event" : json.dumps(ee, cls=ComplexEncoder)})
             
         self.upstats["rstats"] = rstats
         self.upstats["error_stack"] = error_stack
@@ -619,7 +779,6 @@ class SyncTool:
                     elif(rule._freq == 3 and not noByDay(vev.rrule.value)):
                         match = re.search(r'BY[A-Z]{4,5}DAY',vev.rrule.value) #Catches BYWEEKDAY, BYMONTHDAY and BYYEARDAY
                         if match:
-                            print("Special Case not applicable")
                             rstats["error"] += 1
                             error_stack.append({ "message" : "Daily SP1 not applicable", "icalendar" : vev.serialize()})
                         else:
@@ -896,10 +1055,12 @@ class SyncTool:
                 #Case 10b: Status Open, but Event Type is Cancelled
                 elif(ee["event_type"] == "Cancelled"):
                     uploadable = False
+                    self.logProblem("Event Type Cancelled in Method createEvent()", ee["doctype"], ee["name"])
                     modifystats["10b"] += 1
                 #Case 10c: Status Open, but Event Type not in [Public, Private, Confidential,Cancelled]
                 else:
                     uploadable = False
+                    self.logProblem("Event Type not in Public, Private, Confidential or Cancelled in Method createEvent()", ee["doctype"], ee["name"])
                     modifystats["10c"] += 1
                     raise Exception('Exception:', 'Event with Name ' + ee["name"] + ' has the invalid Event Type ' + ee["event_type"])
                 dtend = ee["ends_on"]
@@ -980,7 +1141,7 @@ class SyncTool:
             #traceback.print_exc()
             tb = traceback.format_exc()
             modifystats["exceptions"] += 1
-            error_stack.append({ "message" : "Could not merge event. Exception: \n" + tb, "event" : json.dumps(ee), "vev_ics" : vev_original_ics})
+            error_stack.append({ "message" : "Could not merge event. Exception: \n" + tb, "event" : json.dumps(ee,cls=ComplexEncoder), "vev_ics" : vev_original_ics})
             
         self.modifystats["rstats"] = rstats
         self.modifystats["error_stack"] = error_stack

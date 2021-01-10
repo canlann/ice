@@ -12,7 +12,7 @@ class JCache:
     def __init__(self, cachename='default', cachefolder='.jcache/', timelog=False):
         self.cachefolder = cachefolder
         self.timelog = timelog
-        self.filename = re.sub(r'@"^[\w\-. ]+$";', '', cachename)
+        self.filename = re.sub(r'[^a-zA-Z0-9\-]', '', cachename)
         try:
             Path(cachefolder).mkdir(parents=True, exist_ok=True)
         except OSError as e:

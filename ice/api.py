@@ -675,35 +675,26 @@ def sync_calendar(data):
     """
     #Get ERP Events
     icalendar = data["icalendar"]
-    docs_event = frappe.db.sql(f"""
-            SELECT
-                *
-            FROM `tabEvent`
-            WHERE icalendar = "{icalendar}" AND custom_pattern is NULL;
-            """, as_dict=1)
-    docs_custom_pattern = frappe.db.sql(f"""
-        SELECT
-            *
-        FROM `tabCustom Pattern`
-        WHERE icalendar = "{icalendar}";
-        """, as_dict=1)
 
     #Go through ERP Events
     synctool = SyncTool(account.url,data["calendarurl"],account.username,account.password, data["icalendar"])
-    stats  = synctool.syncEvents(docs_event, docs_custom_pattern)
-        
+    try:
+        synctool.syncEvents()
+    except Exception:
+            #traceback.print_exc()
+            tb = traceback.format_exc()
+            print(tb)
+            
+    del synctool
     #Return JSON and Log
-    message = {}
     d = frappe.get_doc("iCalendar", data["icalendar"])
-    d.last_sync_log = json.dumps(message)
+    d.last_sync_log = json.dumps(SyncTool.retrieveDump())
     d.save()
-    d.add_comment('Comment',text="Stats:\n" + str(stats))
+    #d.add_comment('Comment',text="Stats:\n" + str(stats))
 
-    from ice.jcache import JCache
-    cache = JCache('last_sync')
-    cache.stash("stats",stats)
+    
 
-    return json.dumps(message)
+    return json.dumps({"message" : "None"})
 
 
 
